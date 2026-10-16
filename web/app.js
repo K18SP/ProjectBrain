@@ -1,39 +1,266 @@
-const state={project:'atlas',graph:null,lastInvestigation:null,session:sessionStorage.getItem('pb-session')||crypto.randomUUID()};
-sessionStorage.setItem('pb-session',state.session);
-const $=id=>document.getElementById(id);
-$('topbar-date').textContent=new Intl.DateTimeFormat('en-IN',{weekday:'long',month:'long',day:'numeric',year:'numeric',timeZone:'Asia/Kolkata'}).format(new Date()).toUpperCase();
-const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const api=async(path,options={})=>{const response=await fetch(path,{headers:{'Content-Type':'application/json'},...options});const data=await response.json();if(!response.ok)throw new Error(data.detail||`Request failed: ${response.status}`);return data};
-const toast=message=>{const el=$('toast');el.textContent=message;el.classList.add('visible');clearTimeout(window.toastTimer);window.toastTimer=setTimeout(()=>el.classList.remove('visible'),4200)};
-const kindIcon={Project:'▣',Milestone:'◇',Task:'☑',PullRequest:'⌘',Person:'◉',Team:'◉',Service:'⬡',Decision:'✦',Document:'▤',Investigation:'◷',Repository:'⌘'};
-function view(name){document.querySelectorAll('.view').forEach(el=>el.classList.toggle('active',el.id===`view-${name}`));document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.view===name));$('breadcrumb').textContent={overview:'Overview',assistant:'Ask ProjectBrain',graph:'Knowledge graph',activity:'Investigations'}[name];if(name==='graph')renderGraph();if(name==='activity')renderActivity()}
-document.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>view(el.dataset.view)));
-document.querySelectorAll('[data-go]').forEach(el=>el.addEventListener('click',()=>view(el.dataset.go)));
-document.querySelectorAll('[data-question]').forEach(el=>el.addEventListener('click',()=>{view('assistant');$('question-input').value=el.dataset.question;ask()}));
-$('hero-ask').onclick=()=>view('assistant');$('add-source').onclick=()=>$('source-dialog').showModal();$('refresh').onclick=()=>load();
-$('project-select').onchange=e=>{state.project=e.target.value;loadGraph()};
-$('ask-form').onsubmit=e=>{e.preventDefault();ask()};
-$('question-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();ask()}};
-$('graph-search').oninput=()=>renderGraph();
-$('import-repo').onclick=async()=>{const url=$('repo-url').value.trim();if(!url)return toast('Enter a public GitHub repository URL.');$('import-repo').disabled=true;try{const result=await api('/api/projects/import/github',{method:'POST',body:JSON.stringify({url})});$('source-dialog').close();toast(`Imported ${result.nodes} records and ${result.edges} connections.`);state.project=result.project_id;await load()}catch(error){toast(error.message)}finally{$('import-repo').disabled=false}};
-$('upload-document').onclick=async()=>{const file=$('document-file').files[0];if(!file)return toast('Choose a document first.');$('upload-document').disabled=true;try{const form=new FormData();form.append('file',file);const response=await fetch(`/api/projects/${encodeURIComponent(state.project)}/documents`,{method:'POST',body:form});const result=await response.json();if(!response.ok)throw new Error(result.detail||'Upload failed');$('source-dialog').close();toast(`Added ${result.nodes} document records to the graph.`);await loadGraph()}catch(error){toast(error.message)}finally{$('upload-document').disabled=false}};
-async function load(){try{const health=await api('/api/health');const db=$('db-status');db.textContent=health.graph==='connected'?'FalkorDB connected':'FalkorDB unavailable';db.parentElement.classList.toggle('error',health.graph!=='connected');if(health.graph!=='connected')return;let projects=await api('/api/projects');if(!projects.length){await api('/api/demo/seed',{method:'POST'});projects=await api('/api/projects')}const select=$('project-select');select.innerHTML=projects.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');if(!projects.some(p=>p.id===state.project))state.project=projects[0].id;select.value=state.project;await loadGraph()}catch(error){toast(error.message)}}
-async function loadGraph(){try{state.graph=await api(`/api/projects/${encodeURIComponent(state.project)}/graph`);renderOverview();renderGraph();renderActivity()}catch(error){toast(error.message)}}
-function renderOverview(){const {project,nodes,edges,investigations}=state.graph;$('project-name').textContent=project.name;$('metric-nodes').textContent=nodes.length;$('metric-edges').textContent=edges.length;$('metric-blockers').textContent=nodes.filter(n=>/block|at risk/i.test(n.status||'')).length;$('metric-investigations').textContent=investigations.length;$('network-count').textContent=`${edges.length} connections`;const signals=[...nodes.filter(n=>/block|at risk/i.test(n.status||'')),...nodes.filter(n=>n.kind==='Decision')].slice(0,3);$('signals').innerHTML=signals.length?signals.map((n,i)=>`<div class="signal-row"><span class="signal-bullet">${i===0?'!':kindIcon[n.kind]||'◇'}</span><div><strong>${esc(n.name)}</strong><small>${esc(n.description||`${n.kind} · ${n.status}`)}</small></div><span>↗</span></div>`).join(''):'<div class="empty-list">No active signals from this source.</div>';renderMiniGraph(nodes,edges)}
-function renderMiniGraph(nodes,edges){const sample=nodes.slice(0,8),ids=new Set(sample.map(n=>n.id));const width=450,height=170,positions=sample.map((n,i)=>({id:n.id,x:47+(i%4)*117+(i%2)*7,y:48+Math.floor(i/4)*86}));const byId=Object.fromEntries(positions.map(p=>[p.id,p]));let svg=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Preview of connected project records">`;for(const edge of edges.filter(e=>ids.has(e.source)&&ids.has(e.target)).slice(0,13)){const a=byId[edge.source],b=byId[edge.target];svg+=`<path d="M${a.x} ${a.y} L${b.x} ${b.y}" stroke="#d7e8d7" stroke-width="1.5" fill="none"/>`}for(const [i,n] of sample.entries()){const p=positions[i],name=n.name.length>18?n.name.slice(0,17)+'…':n.name;svg+=`<circle cx="${p.x}" cy="${p.y}" r="17" fill="${n.kind==='Person'?'#e1eafa':n.kind==='Decision'?'#ece6fa':'#e3f1e4'}"/><text x="${p.x}" y="${p.y+4}" text-anchor="middle" font-size="12" fill="#4a8560">${esc(kindIcon[n.kind]||'◇')}</text><text x="${p.x}" y="${p.y+28}" text-anchor="middle" font-size="8" fill="#6a8470">${esc(name)}</text>`}svg+='</svg>';$('mini-graph').innerHTML=svg}
-function renderGraph(){if(!state.graph)return;const q=$('graph-search').value.toLowerCase(),nodes=state.graph.nodes.filter(n=>`${n.name} ${n.kind} ${n.description}`.toLowerCase().includes(q));$('graph-summary').textContent=`${state.graph.nodes.length} records · ${state.graph.edges.length} relationships`;$('graph-list').innerHTML=nodes.length?nodes.map(n=>`<button class="graph-record" data-record="${esc(n.id)}"><span class="record-icon">${esc(kindIcon[n.kind]||'◇')}</span><span><strong>${esc(n.name)}</strong><small>${esc(n.kind)} ${n.status?'· '+esc(n.status):''}</small></span></button>`).join(''):'<div class="empty-list">No records match your search.</div>';document.querySelectorAll('[data-record]').forEach(el=>el.onclick=()=>detail(el.dataset.record))}
-function detail(id){const node=state.graph.nodes.find(n=>n.id===id);if(!node)return;document.querySelectorAll('[data-record]').forEach(el=>el.classList.toggle('selected',el.dataset.record===id));const related=state.graph.edges.filter(e=>e.source===id||e.target===id).map(e=>{const other=state.graph.nodes.find(n=>n.id===(e.source===id?e.target:e.source));return other?`<div class="detail-link">${e.source===id?'→':'←'} ${esc(e.kind.replaceAll('_',' ').toLowerCase())} <strong>${esc(other.name)}</strong></div>`:''}).join('');$('graph-detail').innerHTML=`<span class="detail-kind">${esc(node.kind)} · ${esc(node.source)}</span><h2>${esc(node.name)}</h2><p>${esc(node.description||'No description available from the source.')}</p>${node.status?`<span class="detail-status">${esc(node.status)}</span>`:''}<div class="detail-relationships"><h3>CONNECTED RECORDS</h3>${related||'<p>No recorded connections.</p>'}</div>${node.url?`<a class="detail-source" target="_blank" rel="noopener" href="${esc(node.url)}">Open source record ↗</a>`:''}`}
-function renderActivity(){if(!state.graph)return;$('history-list').innerHTML=state.graph.investigations.length?state.graph.investigations.map(i=>`<div class="history-row"><strong>${esc(i.question)}</strong><p>${esc(i.answer?.slice(0,280)||'')}</p><small>${esc(i.created_at?.slice(0,16).replace('T',' ')||'')}</small></div>`).join(''):'<div class="empty-list">No investigations yet. Ask a question to start building project memory.</div>';$('proposal-list').innerHTML=state.graph.proposals.length?state.graph.proposals.map(p=>`<div class="history-row"><strong>${esc(p.title)}</strong><p>${esc(p.description)}</p><small>${esc(p.status.toUpperCase())} · ${esc(p.created_at?.slice(0,16).replace('T',' ')||'')}</small>${p.status==='pending'?`<div><button data-decision="${esc(p.id)}" data-approved="true">Approve</button><button data-decision="${esc(p.id)}" data-approved="false">Reject</button></div>`:''}</div>`).join(''):'<div class="empty-list">Proposed follow-up tasks will appear here for review.</div>';document.querySelectorAll('[data-decision]').forEach(el=>el.onclick=()=>decide(el.dataset.decision,el.dataset.approved==='true'))}
-async function decide(id,approved){try{await api(`/api/proposals/${encodeURIComponent(id)}/decision`,{method:'POST',body:JSON.stringify({approved})});toast(approved?'Follow-up approved inside ProjectBrain.':'Proposal rejected.');await loadGraph()}catch(error){toast(error.message)}}
-function appendMessage(kind,text,extra=''){const log=$('chat-log');log.querySelector('.welcome-message')?.remove();const row=document.createElement('div');row.className=`chat-message ${kind}`;row.innerHTML=`<div class="bubble">${kind==='assistant'?'<div class="byline">✧ PROJECTBRAIN</div>':''}${esc(text)}${extra}</div>`;log.appendChild(row);log.scrollTop=log.scrollHeight;return row}
-async function ask(){const question=$('question-input').value.trim();if(!question)return;$('question-input').value='';view('assistant');appendMessage('user',question);const pending=appendMessage('assistant','Investigating connected records…');$('ask-button').disabled=true;try{const result=await api('/api/investigations',{method:'POST',body:JSON.stringify({project_id:state.project,question,session_id:state.session})});state.lastInvestigation=result.id;pending.remove();const extra=result.id?`<div class="message-actions"><button id="followup-${result.id}">＋ Prepare follow-up task</button></div>`:'';appendMessage('assistant',result.answer,extra);if(result.id)$(`followup-${result.id}`).onclick=()=>propose(result.id,question);renderTrace(result);await loadGraph()}catch(error){pending.remove();appendMessage('assistant',`I couldn't complete that investigation: ${error.message}`)}finally{$('ask-button').disabled=false}}
-function renderTrace(result){
-  $('trace-count').textContent=`${result.findings.length} agent findings`;
-  $('trace-content').className='trace-list';
-  const byId=Object.fromEntries(result.nodes.map(n=>[n.id,n]));
-  const findings=result.findings.map(f=>`<div class="trace-item"><small>${esc(f.agent)}</small><strong>${esc(f.title)}</strong><p>${esc(f.body)}</p><div class="trace-sources">${f.entity_ids.map(id=>{const n=byId[id];return n?(n.url?`<a target="_blank" rel="noopener" href="${esc(n.url)}">${esc(n.name)} ↗</a>`:`<span>${esc(n.name)}</span>`):''}).join('')}</div></div>`).join('');
-  const paths=result.edges.slice(0,12).map(e=>{const a=byId[e.source],b=byId[e.target];return a&&b?`<div class="trace-path">${esc(a.name)} <b>— ${esc(e.kind.replaceAll('_',' ').toLowerCase())} →</b> ${esc(b.name)}${e.confidence==='candidate'?' <i>(candidate link)</i>':''}</div>`:''}).join('');
-  $('trace-content').innerHTML=findings+(paths?`<div class="trace-item"><small>GRAPH PATHS</small>${paths}</div>`:'')||'<div class="empty-list">No evidence found in connected sources.</div>';
+const state = {
+  project: 'atlas',
+  graph: null,
+  lastInvestigation: null,
+  session: sessionStorage.getItem('projectbrain-session') || crypto.randomUUID(),
+};
+sessionStorage.setItem('projectbrain-session', state.session);
+
+const $ = (id) => document.getElementById(id);
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[character]));
+const recordIcon = { Project: '▣', Milestone: '◇', Task: '☑', PullRequest: '⌘', Person: '◉', Team: '◉', Service: '⬡', Decision: '✦', Document: '▤', DocumentSection: '▤', Investigation: '◷', Repository: '⌘' };
+
+async function api(path, options = {}) {
+  const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+  return data;
 }
-async function propose(id,question){const title=`Investigate: ${question.slice(0,95)}`;try{await api('/api/proposals',{method:'POST',body:JSON.stringify({investigation_id:id,title,description:'Review the ProjectBrain investigation and its connected evidence before taking external action.'})});toast('Follow-up proposal saved for approval.');await loadGraph();view('activity')}catch(error){toast(error.message)}}
-load();
+
+function toast(message) {
+  const element = $('toast');
+  element.textContent = message;
+  element.classList.add('visible');
+  clearTimeout(window.projectBrainToast);
+  window.projectBrainToast = setTimeout(() => element.classList.remove('visible'), 4200);
+}
+
+function showView(name) {
+  document.querySelectorAll('.view').forEach((element) => element.classList.toggle('active', element.id === `view-${name}`));
+  document.querySelectorAll('.nav-item').forEach((element) => element.classList.toggle('active', element.dataset.view === name));
+  if (name === 'graph') renderRecords();
+  if (name === 'activity') renderHistory();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function setConnectionStatus(connected) {
+  $('db-status').textContent = connected ? 'Project data connected' : 'Project data unavailable';
+  $('status-dot').className = `status-dot ${connected ? 'ready' : 'error'}`;
+  $('connection-notice').hidden = connected;
+  if (!connected) $('project-select').innerHTML = '<option value="">No project connected</option>';
+}
+
+async function loadProjects() {
+  try {
+    const health = await api('/api/health');
+    setConnectionStatus(health.graph === 'connected');
+    if (health.graph !== 'connected') return;
+
+    let projects = await api('/api/projects');
+    if (!projects.length) {
+      await api('/api/demo/seed', { method: 'POST' });
+      projects = await api('/api/projects');
+    }
+
+    const selector = $('project-select');
+    selector.innerHTML = projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join('');
+    if (!projects.some((project) => project.id === state.project)) state.project = projects[0].id;
+    selector.value = state.project;
+    await loadGraph();
+  } catch (error) {
+    setConnectionStatus(false);
+    toast(error.message);
+  }
+}
+
+async function loadGraph() {
+  try {
+    state.graph = await api(`/api/projects/${encodeURIComponent(state.project)}/graph`);
+    renderHome();
+    renderRecords();
+    renderHistory();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function renderHome() {
+  if (!state.graph) return;
+  const { project, nodes, investigations } = state.graph;
+  $('project-name').textContent = project.name;
+  $('metric-nodes').textContent = nodes.length;
+  $('metric-investigations').textContent = investigations.length;
+
+  const concerns = nodes.filter((node) => /blocked|at risk/i.test(node.status || ''));
+  $('metric-blockers').textContent = concerns.length;
+  $('signals').innerHTML = concerns.length
+    ? concerns.slice(0, 4).map((node) => `<div class="attention-item"><span class="attention-badge">!</span><div><strong>${escapeHtml(node.name)}</strong><p>${escapeHtml(node.description || `Status: ${node.status}`)}</p></div></div>`).join('')
+    : '<div class="empty-list">No blocked or at-risk items in the connected records.</div>';
+}
+
+function renderRecords() {
+  if (!state.graph) return;
+  const query = $('graph-search').value.toLowerCase();
+  const nodes = state.graph.nodes.filter((node) => `${node.name} ${node.kind} ${node.description}`.toLowerCase().includes(query));
+  $('graph-summary').textContent = `${state.graph.nodes.length} records · ${state.graph.edges.length} connections`;
+  $('graph-list').innerHTML = nodes.length
+    ? nodes.map((node) => `<button class="graph-record" data-record="${escapeHtml(node.id)}"><span class="record-icon">${escapeHtml(recordIcon[node.kind] || '◇')}</span><span><strong>${escapeHtml(node.name)}</strong><small>${escapeHtml(node.kind)}${node.status ? ` · ${escapeHtml(node.status)}` : ''}</small></span></button>`).join('')
+    : '<div class="empty-list">No records match your search.</div>';
+}
+
+function showRecord(id) {
+  if (!state.graph) return;
+  const node = state.graph.nodes.find((item) => item.id === id);
+  if (!node) return;
+  document.querySelectorAll('[data-record]').forEach((element) => element.classList.toggle('selected', element.dataset.record === id));
+  const links = state.graph.edges.filter((edge) => edge.source === id || edge.target === id).map((edge) => {
+    const other = state.graph.nodes.find((item) => item.id === (edge.source === id ? edge.target : edge.source));
+    if (!other) return '';
+    const direction = edge.source === id ? '→' : '←';
+    const label = edge.kind.replaceAll('_', ' ').toLowerCase();
+    const uncertainty = edge.confidence === 'candidate' ? ' · possible match' : '';
+    return `<div class="detail-link">${direction} ${escapeHtml(label)} <strong>${escapeHtml(other.name)}</strong>${uncertainty}</div>`;
+  }).join('');
+  $('graph-detail').innerHTML = `
+    <span class="detail-kind">${escapeHtml(node.kind)} · ${escapeHtml(node.source)}</span>
+    <h2>${escapeHtml(node.name)}</h2>
+    <p>${escapeHtml(node.description || 'No description is available from the source.')}</p>
+    ${node.status ? `<span class="detail-status">${escapeHtml(node.status)}</span>` : ''}
+    <div class="detail-relationships"><h3>Connected to</h3>${links || '<p>No recorded connections.</p>'}</div>
+    ${node.url ? `<a class="detail-source" target="_blank" rel="noopener" href="${escapeHtml(node.url)}">Open original record →</a>` : ''}`;
+}
+
+function renderHistory() {
+  if (!state.graph) return;
+  $('history-list').innerHTML = state.graph.investigations.length
+    ? state.graph.investigations.map((item) => `<div class="history-row"><strong>${escapeHtml(item.question)}</strong><p>${escapeHtml(item.answer?.slice(0, 280) || '')}</p><small>${escapeHtml(item.created_at?.slice(0, 16).replace('T', ' ') || '')}</small></div>`).join('')
+    : '<div class="empty-list">No past questions yet. Ask a question to start a project history.</div>';
+  $('proposal-list').innerHTML = state.graph.proposals.length
+    ? state.graph.proposals.map((item) => `<div class="history-row"><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.description)}</p><small>${escapeHtml(item.status)} · ${escapeHtml(item.created_at?.slice(0, 16).replace('T', ' ') || '')}</small>${item.status === 'pending' ? `<div><button data-decision="${escapeHtml(item.id)}" data-approved="true">Approve</button><button data-decision="${escapeHtml(item.id)}" data-approved="false">Dismiss</button></div>` : ''}</div>`).join('')
+    : '<div class="empty-list">No follow-up tasks have been proposed yet.</div>';
+}
+
+async function decideProposal(id, approved) {
+  try {
+    await api(`/api/proposals/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ approved }) });
+    toast(approved ? 'Follow-up approved in ProjectBrain.' : 'Follow-up dismissed.');
+    await loadGraph();
+  } catch (error) { toast(error.message); }
+}
+
+function appendMessage(kind, text, extra = '') {
+  const log = $('chat-log');
+  log.querySelector('.welcome-message')?.remove();
+  const row = document.createElement('div');
+  row.className = `chat-message ${kind}`;
+  row.innerHTML = `<div class="bubble">${kind === 'assistant' ? '<div class="byline">PROJECTBRAIN</div>' : ''}${escapeHtml(text)}${extra}</div>`;
+  log.appendChild(row);
+  log.scrollTop = log.scrollHeight;
+  return row;
+}
+
+function renderEvidence(result) {
+  $('trace-count').textContent = result.findings.length ? `${result.findings.length} findings from project records` : 'No supporting records found';
+  $('trace-content').className = 'trace-list';
+  const byId = Object.fromEntries(result.nodes.map((node) => [node.id, node]));
+  const findings = result.findings.map((finding) => `
+    <div class="trace-item"><small>${escapeHtml(finding.agent)}</small><strong>${escapeHtml(finding.title)}</strong>
+    <p>${escapeHtml(finding.body)}</p><div class="trace-sources">${finding.entity_ids.map((id) => {
+      const node = byId[id];
+      if (!node) return '';
+      return node.url ? `<a target="_blank" rel="noopener" href="${escapeHtml(node.url)}">${escapeHtml(node.name)} ↗</a>` : `<span>${escapeHtml(node.name)}</span>`;
+    }).join('')}</div></div>`).join('');
+  const paths = result.edges.slice(0, 12).map((edge) => {
+    const first = byId[edge.source], second = byId[edge.target];
+    if (!first || !second) return '';
+    return `<div class="trace-path">${escapeHtml(first.name)} <b>— ${escapeHtml(edge.kind.replaceAll('_', ' ').toLowerCase())} →</b> ${escapeHtml(second.name)}${edge.confidence === 'candidate' ? ' <i>(possible match)</i>' : ''}</div>`;
+  }).join('');
+  $('trace-content').innerHTML = findings + (paths ? `<div class="trace-item"><small>Connections used</small>${paths}</div>` : '') || '<div class="empty-list">No evidence found in connected sources.</div>';
+}
+
+async function askQuestion() {
+  const question = $('question-input').value.trim();
+  if (!question) return;
+  $('question-input').value = '';
+  showView('assistant');
+  appendMessage('user', question);
+  const pending = appendMessage('assistant', 'Checking the connected project records…');
+  $('ask-button').disabled = true;
+  try {
+    const result = await api('/api/investigations', { method: 'POST', body: JSON.stringify({ project_id: state.project, question, session_id: state.session }) });
+    state.lastInvestigation = result.id;
+    pending.remove();
+    const extra = result.id ? `<div class="message-actions"><button data-followup="${escapeHtml(result.id)}">Suggest a follow-up task</button></div>` : '';
+    appendMessage('assistant', result.answer, extra);
+    renderEvidence(result);
+    await loadGraph();
+  } catch (error) {
+    pending.remove();
+    appendMessage('assistant', `I could not complete that question: ${error.message}`);
+  } finally { $('ask-button').disabled = false; }
+}
+
+async function proposeFollowup(investigationId) {
+  const title = 'Review this project investigation';
+  try {
+    await api('/api/proposals', { method: 'POST', body: JSON.stringify({ investigation_id: investigationId, title, description: 'Review the answer and supporting project records before choosing a next step.' }) });
+    toast('Follow-up task added for your review.');
+    await loadGraph();
+    showView('activity');
+  } catch (error) { toast(error.message); }
+}
+
+async function importRepository() {
+  const url = $('repo-url').value.trim();
+  if (!url) return toast('Enter a public GitHub repository URL.');
+  $('import-repo').disabled = true;
+  try {
+    const result = await api('/api/projects/import/github', { method: 'POST', body: JSON.stringify({ url }) });
+    $('source-dialog').close();
+    state.project = result.project_id;
+    toast(`Added ${result.nodes} records from GitHub.`);
+    await loadProjects();
+  } catch (error) { toast(error.message); }
+  finally { $('import-repo').disabled = false; }
+}
+
+async function uploadDocument() {
+  const file = $('document-file').files[0];
+  if (!file) return toast('Choose a document first.');
+  $('upload-document').disabled = true;
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch(`/api/projects/${encodeURIComponent(state.project)}/documents`, { method: 'POST', body: form });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || 'Could not add the document');
+    $('source-dialog').close();
+    toast(`Added ${result.nodes} document records to the project.`);
+    await loadGraph();
+  } catch (error) { toast(error.message); }
+  finally { $('upload-document').disabled = false; }
+}
+
+document.querySelectorAll('[data-view]').forEach((element) => element.addEventListener('click', () => showView(element.dataset.view)));
+document.querySelectorAll('[data-go]').forEach((element) => element.addEventListener('click', () => showView(element.dataset.go)));
+document.addEventListener('click', (event) => {
+  const example = event.target.closest('[data-question]');
+  if (example) { $('question-input').value = example.dataset.question; askQuestion(); }
+  const record = event.target.closest('[data-record]');
+  if (record) showRecord(record.dataset.record);
+  const decision = event.target.closest('[data-decision]');
+  if (decision) decideProposal(decision.dataset.decision, decision.dataset.approved === 'true');
+  const followup = event.target.closest('[data-followup]');
+  if (followup) proposeFollowup(followup.dataset.followup);
+});
+$('quick-ask-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  $('question-input').value = $('quick-question').value;
+  $('quick-question').value = '';
+  askQuestion();
+});
+$('ask-form').addEventListener('submit', (event) => { event.preventDefault(); askQuestion(); });
+$('question-input').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askQuestion(); }
+});
+$('graph-search').addEventListener('input', renderRecords);
+$('project-select').addEventListener('change', (event) => { state.project = event.target.value; loadGraph(); });
+$('refresh').addEventListener('click', loadProjects);
+$('add-source').addEventListener('click', () => $('source-dialog').showModal());
+$('top-add-source').addEventListener('click', () => $('source-dialog').showModal());
+$('import-repo').addEventListener('click', importRepository);
+$('upload-document').addEventListener('click', uploadDocument);
+$('topbar-date').textContent = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date());
+loadProjects();
