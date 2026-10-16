@@ -89,11 +89,11 @@ class GraphStore:
     def neighborhood(self, project_id: str, entity_id: str) -> list[dict]:
         rows = self.query(
             "MATCH (a:Entity {id:$id,project_id:$project_id})-[r]-(b:Entity {project_id:$project_id}) "
-            "RETURN b.id,b.kind,b.name,b.status,b.url,b.description,b.owner,type(r),startNode(r).id,endNode(r).id "
+            "RETURN b.id,b.kind,b.name,b.status,b.url,b.description,b.owner,type(r),startNode(r).id,endNode(r).id,r.confidence "
             "LIMIT 100",
             {"id": entity_id, "project_id": project_id},
         )
-        return [dict(zip(("id", "kind", "name", "status", "url", "description", "owner", "relationship", "source", "target"), r)) for r in rows]
+        return [dict(zip(("id", "kind", "name", "status", "url", "description", "owner", "relationship", "source", "target", "confidence"), r)) for r in rows]
 
     def create_investigation(self, project_id: str, question: str, session_id: str) -> str:
         investigation_id = str(uuid4())

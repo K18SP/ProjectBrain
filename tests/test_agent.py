@@ -15,6 +15,12 @@ def test_dynamic_question_selects_relevant_milestone_and_blocker():
     assert "task:auth" in ids
 
 
+def test_broad_questions_select_record_types_without_exact_names():
+    entities = [entity.model_dump() for entity in demo_project().entities]
+    assert any(entity["kind"] == "Person" for entity in rank_entities("Who is responsible?", entities))
+    assert any(entity["kind"] == "PullRequest" for entity in rank_entities("What changed recently?", entities))
+
+
 def test_public_repo_url_rejects_non_github_host_and_deep_links():
     assert parse_public_repo("https://github.com/K18SP/ProjectBrain.git") == ("K18SP", "ProjectBrain")
     for url in ("https://github.com.evil.test/a/b", "https://github.com/a/b/issues/1", "http://github.com/a/b"):
