@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#10211f" />
+  <title>ProjectBrain — Connected project intelligence</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <link rel="stylesheet" href="/assets/extra.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-icon"><span></span><span></span><span></span><span></span></div><div>project<span>brain</span><small>WORKSPACE INTELLIGENCE</small></div></div>
+      <div class="workspace-pill"><div class="workspace-avatar">A</div><div><strong>Atlas workspace</strong><small>Engineering organization</small></div><span class="chevron">⌄</span></div>
+      <div class="nav-label">WORKSPACE</div>
+      <nav>
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span> Overview</button>
+        <button class="nav-item" data-view="assistant"><span class="nav-icon">✧</span> Ask ProjectBrain <span class="nav-tag">AI</span></button>
+        <button class="nav-item" data-view="graph"><span class="nav-icon">⌘</span> Knowledge graph</button>
+        <button class="nav-item" data-view="activity"><span class="nav-icon">◷</span> Investigations</button>
+      </nav>
+      <div class="nav-label sources-title">CONNECTED SOURCES</div>
+      <div class="source-item"><span class="source-logo github-logo">⌘</span><span>GitHub</span><span class="source-state live">LIVE</span></div>
+      <div class="source-item"><span class="source-logo jira-logo">◆</span><span>Jira</span><span class="source-state">PLANNED</span></div>
+      <div class="source-item"><span class="source-logo docs-logo">▤</span><span>Documents</span><span class="source-state live">LIVE</span></div>
+      <button class="add-source" id="add-source">＋ Add a source</button>
+      <div class="sidebar-bottom"><div class="db-status"><i></i><span id="db-status">Checking FalkorDB…</span></div><div class="profile"><div class="profile-avatar">K</div><div><strong>Project workspace</strong><small>Local development</small></div><span>⋯</span></div></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar"><div class="breadcrumbs">Workspace <span>/</span> <b id="breadcrumb">Overview</b></div><div class="topbar-right"><span class="topbar-date" id="topbar-date"></span><button class="icon-button" id="refresh" title="Refresh">↻</button><div class="top-avatar">K</div></div></header>
+      <div class="content">
+        <section id="view-overview" class="view active">
+          <div class="eyebrow"><span class="eyebrow-line"></span> PROJECT INTELLIGENCE</div>
+          <div class="hero-row"><div><h1>Good morning, <em>builder.</em></h1><p class="subtitle">One clear view of your project. Every answer connected to evidence.</p></div><button class="primary-button" id="hero-ask">✧ &nbsp; Ask ProjectBrain <span>↗</span></button></div>
+          <div class="project-select-row"><div class="project-title"><span class="project-symbol">A</span><div><small>ACTIVE PROJECT</small><h2 id="project-name">Atlas</h2></div><select id="project-select" aria-label="Select project"></select></div><span class="sync-state"><span></span> GRAPH CONNECTED</span></div>
+          <div class="metrics"><div class="metric"><span class="metric-icon mint">⌘</span><span class="metric-label">CONNECTED RECORDS</span><strong id="metric-nodes">—</strong><small>Across project sources</small></div><div class="metric"><span class="metric-icon blue">◇</span><span class="metric-label">RELATIONSHIPS</span><strong id="metric-edges">—</strong><small>Traceable connections</small></div><div class="metric"><span class="metric-icon amber">◷</span><span class="metric-label">ACTIVE BLOCKERS</span><strong id="metric-blockers">—</strong><small>Needs attention</small></div><div class="metric"><span class="metric-icon violet">✧</span><span class="metric-label">INVESTIGATIONS</span><strong id="metric-investigations">—</strong><small>Remembered across sessions</small></div></div>
+          <div class="section-heading"><div><span class="eyebrow small">WHAT MATTERS NOW</span><h2>Project signals</h2></div><button class="text-button" data-go="graph">Explore graph →</button></div>
+          <div class="overview-grid"><div class="signal-card"><div class="card-top"><span class="card-kicker">01 / PROJECT HEALTH</span><span class="outline-badge">LIVE GRAPH</span></div><div id="signals" class="signals"></div></div><div class="network-card"><div class="card-top"><span class="card-kicker">02 / CONNECTIONS</span><span class="network-count" id="network-count">— connections</span></div><div id="mini-graph" class="mini-graph"></div><div class="network-footer">Every line is a relationship stored in FalkorDB. <button data-go="graph">Open graph ↗</button></div></div></div>
+          <div class="section-heading lower"><div><span class="eyebrow small">TRY AN INVESTIGATION</span><h2>Start with a question</h2></div></div>
+          <div class="prompt-grid"><button class="prompt-card" data-question="What is blocking the public beta launch?"><span>↗</span><strong>What is blocking the public beta launch?</strong><small>Trace the dependency chain</small></button><button class="prompt-card" data-question="Who owns the authentication work and why is it required?"><span>↗</span><strong>Who owns authentication and why is it required?</strong><small>Connect people and decisions</small></button><button class="prompt-card" data-question="What did we learn from the previous auth release delay?"><span>↗</span><strong>What happened in the previous auth delay?</strong><small>Retrieve project memory</small></button></div>
+        </section>
+
+        <section id="view-assistant" class="view"><div class="eyebrow"><span class="eyebrow-line"></span> INVESTIGATE ANY QUESTION</div><h1>Ask the <em>project.</em></h1><p class="subtitle">ProjectBrain follows connected records, coordinates specialist agents, and shows where each answer came from.</p><div class="assistant-layout"><div class="chat-panel"><div class="chat-header"><span class="assistant-avatar">✧</span><div><strong>ProjectBrain</strong><small>Graph-aware project assistant</small></div><span class="status-pill"><i></i> READY</span></div><div class="chat-log" id="chat-log"><div class="welcome-message"><span class="welcome-spark">✧</span><h3>Ask me anything about your project.</h3><p>I can trace blockers, find owners, connect decisions, and remember what we investigated before.</p><div class="suggestions"><button data-question="What is blocking the beta launch?">What is blocking the beta launch? ↗</button><button data-question="Who owns the security review?">Who owns the security review? ↗</button></div></div></div><form id="ask-form" class="ask-form"><textarea id="question-input" rows="2" placeholder="Ask a question about this project…" aria-label="Question"></textarea><div class="ask-footer"><span>Grounded in your connected graph</span><button type="submit" id="ask-button">Ask <span>↗</span></button></div></form></div><aside class="evidence-panel"><div class="evidence-heading"><span>INVESTIGATION TRACE</span><small id="trace-count">Waiting for a question</small></div><div id="trace-content" class="trace-empty"><span>⌘</span><strong>Evidence appears here</strong><p>Ask a question to see agent findings and the records behind them.</p></div></aside></div></section>
+
+        <section id="view-graph" class="view"><div class="eyebrow"><span class="eyebrow-line"></span> FALKORDB EXPLORER</div><div class="view-title-row"><div><h1>The connected <em>picture.</em></h1><p class="subtitle">Follow the paths between work, people, code, and decisions.</p></div><div class="legend"><span><i class="dot task"></i> Task</span><span><i class="dot person"></i> Person</span><span><i class="dot decision"></i> Decision</span></div></div><div class="graph-toolbar"><input id="graph-search" type="search" placeholder="Search records…" aria-label="Search graph records" /><span id="graph-summary">—</span></div><div class="graph-layout"><div class="graph-list" id="graph-list"></div><div class="graph-detail" id="graph-detail"><div class="detail-empty">Select a record to inspect its connections.</div></div></div></section>
+
+        <section id="view-activity" class="view"><div class="eyebrow"><span class="eyebrow-line"></span> PERSISTENT MEMORY</div><h1>Every decision, <em>remembered.</em></h1><p class="subtitle">Investigations and proposed actions are saved in FalkorDB across sessions.</p><div class="activity-grid"><div class="activity-card"><div class="card-top"><span class="card-kicker">INVESTIGATION HISTORY</span></div><div id="history-list" class="history-list"></div></div><div class="activity-card"><div class="card-top"><span class="card-kicker">ACTION PROPOSALS</span></div><div id="proposal-list" class="history-list"></div></div></div></section>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <dialog id="source-dialog"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button><div class="dialog-eyebrow">CONNECT A SOURCE</div><h2>Bring more context into the graph.</h2><p>Import a public GitHub repository or add a project document. Jira integration is on the roadmap.</p><label for="repo-url">PUBLIC GITHUB REPOSITORY</label><input id="repo-url" placeholder="https://github.com/owner/repository" /><div class="dialog-actions"><button id="import-repo" type="button" class="primary-button">Import repository ↗</button></div><div class="dialog-divider">OR ADD A DOCUMENT TO THE CURRENT PROJECT</div><label for="document-file">TXT, MARKDOWN, PDF OR DOCX · UP TO 5 MB</label><input id="document-file" type="file" accept=".txt,.md,.pdf,.docx" /><div class="dialog-actions"><button value="cancel" class="secondary-button">Cancel</button><button id="upload-document" type="button" class="primary-button">Add document ↗</button></div></form></dialog>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

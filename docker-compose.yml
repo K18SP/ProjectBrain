@@ -1,0 +1,30 @@
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"
+      - "3000:3000"
+    volumes:
+      - graph-data:/var/lib/falkordb/data
+    environment:
+      REDIS_ARGS: --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+    depends_on:
+      falkordb:
+        condition: service_healthy
+volumes:
+  graph-data:
