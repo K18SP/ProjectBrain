@@ -139,7 +139,7 @@ class GraphStore:
         rows = self.query(
             "MATCH (i:Investigation {id:$id})-[:HAS_FINDING]->(f:Finding) "
             "OPTIONAL MATCH (f)-[:SUPPORTED_BY]->(e:Entity) "
-            "RETURN f.id,f.agent,f.title,f.body,collect(e.id) ORDER BY f.created_at",
+            "RETURN f.id,f.agent,f.title,f.body,collect(e.id),f.created_at AS created_at ORDER BY created_at",
             {"id": investigation_id},
         )
         return [dict(zip(("id", "agent", "title", "body", "entity_ids"), r)) for r in rows]

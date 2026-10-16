@@ -36,6 +36,10 @@ uvicorn app.main:app --reload
 
 Copy `.env.example` to `.env` if you want to set credentials. The app reads environment variables; your shell or container runtime must load them. `GITHUB_TOKEN` is optional but helps avoid GitHub's anonymous API rate limit. `OPENAI_API_KEY` is optional.
 
+### Windows Docker Desktop startup issue
+
+Some Docker Desktop versions fail before the Linux engine starts because Windows cannot remove transient `dockerInference` or `engine.sock` socket files. If Docker logs show this exact error, see [Docker's issue report](https://github.com/docker/desktop-feedback/issues/531). After Docker Desktop has fully stopped, move both `%LOCALAPPDATA%\Docker\run` and `%LOCALAPPDATA%\docker-secrets-engine` aside to uniquely named backup folders, set `"EnableDockerAI": false` in a backed-up `%APPDATA%\Docker\settings-store.json`, and restart Docker Desktop. These are runtime socket folders; keep the backups until the engine and your containers are verified. Do not use Docker Desktop's factory reset to resolve this socket error, because it can remove local container data and volumes.
+
 ## Use the demo
 
 1. Open the workspace; the Atlas demo is loaded automatically.
