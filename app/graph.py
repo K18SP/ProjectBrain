@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import os
 import re
+import json
+import threading
+from collections import defaultdict
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from falkordb import FalkorDB
 
 from .schema import Entity, Link, ProjectData
+
+_IMPORT_LOCK = threading.RLock()
 
 
 def utc_now() -> str:
@@ -21,6 +26,8 @@ class GraphStore:
         options = {
             "host": os.getenv("FALKORDB_HOST", "localhost"),
             "port": int(os.getenv("FALKORDB_PORT", "6379")),
+            "socket_connect_timeout": 3,
+            "socket_timeout": 15,
         }
         if os.getenv("FALKORDB_PASSWORD"):
             options["password"] = os.environ["FALKORDB_PASSWORD"]
@@ -35,31 +42,91 @@ class GraphStore:
         return True
 
     def import_project(self, data: ProjectData) -> dict:
+        # One writer per process prevents two refreshes from interleaving source snapshots.
+        with _IMPORT_LOCK:
+            return self._import_project(data)
+
+    def _import_project(self, data: ProjectData) -> dict:
         self.query(
             "MERGE (p:Project {id:$id}) SET p.name=$name, p.description=$description, p.updated_at=$now",
             {"id": data.project_id, "name": data.name, "description": data.description, "now": utc_now()},
         )
-        for entity in data.entities:
-            payload = entity.model_dump()
-            payload["project_id"] = data.project_id
-            payload["updated_at"] = entity.updated_at or utc_now()
-            self.query(
-                "MERGE (e:Entity {id:$id, project_id:$project_id}) "
-                "SET e.kind=$kind, e.name=$name, e.status=$status, e.source=$source, "
-                "e.url=$url, e.updated_at=$updated_at, e.description=$description, e.owner=$owner",
-                payload,
-            )
+        source_id = data.source_id or f"demo:{data.project_id}"
+        grouped = defaultdict(list)
         for link in data.links:
             if not re.fullmatch(r"[A-Z][A-Z0-9_]*", link.kind):
                 raise ValueError("Invalid relationship kind")
+            grouped[link.kind].append(link.model_dump())
+        payload = [entity.model_dump() for entity in data.entities]
+        for offset in range(0, len(payload), 200):
             self.query(
-                f"MATCH (a:Entity {{id:$source, project_id:$project_id}}), "
-                f"(b:Entity {{id:$target, project_id:$project_id}}) "
-                f"MERGE (a)-[r:{link.kind}]->(b) "
-                "SET r.evidence=$evidence, r.confidence=$confidence",
-                {**link.model_dump(), "project_id": data.project_id},
+                "UNWIND $entities AS item MERGE (e:Entity {id:item.id,project_id:$project_id}) "
+                "SET e.kind=item.kind,e.name=item.name,e.status=item.status,e.source=item.source,"
+                "e.url=item.url,e.updated_at=item.updated_at,e.description=item.description,e.owner=item.owner,"
+                "e.source_id=$source_id,e.archived=false",
+                {"entities": payload[offset:offset + 200], "project_id": data.project_id, "source_id": source_id},
             )
-        return {"project_id": data.project_id, "nodes": len(data.entities), "edges": len(data.links)}
+        ids = [entity.id for entity in data.entities]
+        if not data.partial:
+            self.query("MATCH (e:Entity {project_id:$project_id,source_id:$source_id}) "
+                       "WHERE NOT e.id IN $ids SET e.archived=true",
+                       {"project_id": data.project_id, "source_id": source_id, "ids": ids})
+        # On partial imports, keep links for records outside the fetched window.
+        self.query("MATCH (a:Entity {project_id:$project_id})-[r]->(b:Entity {project_id:$project_id}) "
+                   "WHERE r.source_id=$source_id AND ($partial=false OR "
+                   "(a.id IN $ids AND NOT a.kind IN ['Person','Repository','Project']) OR "
+                   "(b.id IN $ids AND NOT b.kind IN ['Person','Repository','Project'])) DELETE r",
+                   {"project_id": data.project_id, "source_id": source_id, "ids": ids, "partial": data.partial})
+        for kind, links in grouped.items():
+            for offset in range(0, len(links), 200):
+                self.query(
+                    "UNWIND $links AS item MATCH (a:Entity {id:item.source,project_id:$project_id}),"
+                    "(b:Entity {id:item.target,project_id:$project_id}) "
+                    f"MERGE (a)-[r:{kind} {{source_id:$source_id}}]->(b) "
+                    "SET r.evidence=item.evidence,r.confidence=item.confidence",
+                    {"links": links[offset:offset + 200], "project_id": data.project_id, "source_id": source_id})
+        self.query("MERGE (s:Source {id:$id,project_id:$project_id}) "
+                   "SET s.kind=$kind,s.name=$name,s.url=$url,s.synced_at=$now,s.record_count=$count,"
+                   "s.partial=$partial,s.warnings=$warnings",
+                   {"id": source_id, "project_id": data.project_id, "kind": data.source_kind or "demo",
+                    "name": data.source_name or data.name, "url": data.source_url, "now": utc_now(),
+                    "count": len(data.entities), "partial": data.partial, "warnings": json.dumps(data.warnings)})
+        self.connect_mentions(data.project_id)
+        return {"project_id": data.project_id, "nodes": len(data.entities), "edges": len(data.links),
+                "source_id": source_id, "warnings": data.warnings, "partial": data.partial}
+
+    def sources(self, project_id: str) -> list[dict]:
+        rows = self.query("MATCH (s:Source {project_id:$project_id}) "
+                          "RETURN s.id,s.kind,s.name,s.url,s.synced_at,s.record_count,s.partial,s.warnings ORDER BY s.name",
+                          {"project_id": project_id})
+        result = [dict(zip(("id", "kind", "name", "url", "synced_at", "record_count", "partial", "warnings"), row)) for row in rows]
+        for item in result:
+            item["warnings"] = json.loads(item["warnings"] or "[]")
+        return result
+
+    def connect_mentions(self, project_id: str) -> None:
+        """Cross-source mentions are candidates, never inferred ownership or blockers."""
+        nodes = self.entities(project_id, limit=5000)
+        references = defaultdict(list)
+        for node in nodes:
+            if re.match(r"^[A-Z][A-Z0-9_]*-\d+\b", node["name"]):
+                references[node["name"].split()[0]].append(node)
+        links = []
+        for node in nodes:
+            if not node.get("description"):
+                continue
+            for token in set(re.findall(r"\b[A-Z][A-Z0-9_]*-\d+\b", node["description"])):
+                for target in references[token]:
+                    if node.get("source_id") != target.get("source_id"):
+                        links.append({"source": node["id"], "target": target["id"], "evidence": token})
+        self.query("MATCH (a:Entity {project_id:$project_id})-[r:MENTIONS]->(b:Entity {project_id:$project_id}) "
+                   "WHERE r.source_id='cross-source' DELETE r", {"project_id": project_id})
+        for offset in range(0, len(links), 200):
+            self.query("UNWIND $links AS item MATCH (a:Entity {id:item.source,project_id:$project_id}),"
+                       "(b:Entity {id:item.target,project_id:$project_id}) "
+                       "MERGE (a)-[r:MENTIONS {source_id:'cross-source'}]->(b) "
+                       "SET r.confidence='candidate',r.evidence=item.evidence",
+                       {"project_id": project_id, "links": links[offset:offset + 200]})
 
     def projects(self) -> list[dict]:
         rows = self.query("MATCH (p:Project) RETURN p.id,p.name,p.description ORDER BY p.name")
@@ -69,18 +136,19 @@ class GraphStore:
         rows = self.query("MATCH (p:Project {id:$id}) RETURN p.id,p.name,p.description", {"id": project_id})
         return {"id": rows[0][0], "name": rows[0][1], "description": rows[0][2]} if rows else None
 
-    def entities(self, project_id: str, limit: int = 350) -> list[dict]:
+    def entities(self, project_id: str, limit: int = 5000) -> list[dict]:
         rows = self.query(
-            "MATCH (e:Entity {project_id:$project_id}) "
-            "RETURN e.id,e.kind,e.name,e.status,e.source,e.url,e.updated_at,e.description,e.owner "
+            "MATCH (e:Entity {project_id:$project_id}) WHERE coalesce(e.archived,false)=false "
+            "RETURN e.id,e.kind,e.name,e.status,e.source,e.url,e.updated_at,e.description,e.owner,e.source_id "
             "ORDER BY e.kind,e.name LIMIT $limit",
             {"project_id": project_id, "limit": limit},
         )
-        return [dict(zip(("id", "kind", "name", "status", "source", "url", "updated_at", "description", "owner"), r)) for r in rows]
+        return [dict(zip(("id", "kind", "name", "status", "source", "url", "updated_at", "description", "owner", "source_id"), r)) for r in rows]
 
-    def links(self, project_id: str, limit: int = 800) -> list[dict]:
+    def links(self, project_id: str, limit: int = 10000) -> list[dict]:
         rows = self.query(
             "MATCH (a:Entity {project_id:$project_id})-[r]->(b:Entity {project_id:$project_id}) "
+            "WHERE coalesce(a.archived,false)=false AND coalesce(b.archived,false)=false "
             "RETURN a.id,b.id,type(r),r.evidence,r.confidence LIMIT $limit",
             {"project_id": project_id, "limit": limit},
         )
@@ -89,6 +157,7 @@ class GraphStore:
     def neighborhood(self, project_id: str, entity_id: str) -> list[dict]:
         rows = self.query(
             "MATCH (a:Entity {id:$id,project_id:$project_id})-[r]-(b:Entity {project_id:$project_id}) "
+            "WHERE coalesce(b.archived,false)=false "
             "RETURN b.id,b.kind,b.name,b.status,b.url,b.description,b.owner,type(r),startNode(r).id,endNode(r).id,r.confidence "
             "LIMIT 100",
             {"id": entity_id, "project_id": project_id},
@@ -116,7 +185,8 @@ class GraphStore:
         )
         for entity_id in entity_ids:
             self.query(
-                "MATCH (f:Finding {id:$finding_id}),(e:Entity {id:$entity_id}) "
+                "MATCH (i:Investigation)-[:HAS_FINDING]->(f:Finding {id:$finding_id}),(e:Entity {id:$entity_id}) "
+                "WHERE i.project_id=e.project_id "
                 "MERGE (f)-[:SUPPORTED_BY]->(e)",
                 {"finding_id": finding_id, "entity_id": entity_id},
             )

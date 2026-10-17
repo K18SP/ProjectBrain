@@ -7,12 +7,12 @@ ProjectBrain is a graph-backed project investigation workspace built for **Graph
 - A polished workspace with project signals, a searchable graph explorer, an assistant, investigation history, and a task approval screen.
 - A repeatable Atlas demo project with blockers, ownership, pull requests, a release, a decision, a document, and a past investigation.
 - Upload of TXT, Markdown, PDF, or DOCX files. Extracted sections connect to existing project records when their names are mentioned; these links are marked as candidates.
-- Read-only import of the first 60 issues and pull requests from **any public GitHub repository**. Explicit `fixes #N`, `closes #N`, `resolves #N`, `blocked by #N`, and `depends on #N` references become relationships when both records are present.
+- Read-only paginated import of GitHub issues, pull requests, assignees, milestones, and README sections. The default is up to 1,000 work records, configurable with `IMPORT_MAX_RECORDS` (maximum 5,000). Explicit `fixes #N`, `closes #N`, `resolves #N`, `blocked by #N`, and `depends on #N` references become relationships when both records are present.
 - FalkorDB-backed project records, relationships, investigation findings, prior-session recall, and local action proposals.
 - Dynamic natural-language question handling. The agent ranks relevant entities, traverses their FalkorDB relationships up to three hops, and combines dependency, ownership, knowledge, and memory findings.
 - Optional model-generated wording with `OPENAI_API_KEY`; without a key, deterministic evidence-based wording still works.
 
-**Current boundaries:** GitHub import is public and read-only. Jira OAuth, organization authentication, external writes, and multi-tenant isolation are designed future work, not live features. Uploaded document text is stored in FalkorDB and can be read through the unauthenticated local API; use only public or synthetic documents. Approved proposals stay inside ProjectBrain. This is a production-shaped prototype, not a system for processing private company data yet.
+**Current boundaries:** This is a local prototype, not a production deployment. The local API has no user authentication or tenant isolation. Imports run within requests rather than a durable background queue, and graph refreshes are not transactional. Keep it bound to localhost and use public or synthetic data. GitHub and Jira connectors are read-only; approved proposals stay inside ProjectBrain. GitHub source code, PR diffs, comments, and attachments are not imported. Retrieval uses keyword ranking and bounded graph traversal; an optional model writes from the retrieved evidence. It cannot guarantee answers to every question.
 
 ## Run locally
 
@@ -22,7 +22,7 @@ The easiest route is Docker Desktop:
 docker compose up --build
 ```
 
-Open [http://localhost:8000](http://localhost:8000). FalkorDB Browser is at [http://localhost:3000](http://localhost:3000). On first load, ProjectBrain seeds the Atlas example if no projects exist.
+Open [http://localhost:8000](http://localhost:8000). FalkorDB Browser is at [http://localhost:3000](http://localhost:3000). An empty installation starts with onboarding. Add your own source or explicitly choose the optional Atlas demo.
 
 Alternatively, run FalkorDB in Docker and the API in a local Python environment:
 
@@ -34,7 +34,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Copy `.env.example` to `.env` if you want to set credentials. The app reads environment variables; your shell or container runtime must load them. `GITHUB_TOKEN` is optional but helps avoid GitHub's anonymous API rate limit. `OPENAI_API_KEY` is optional.
+Copy `.env.example` to `.env` if you want to set credentials. Docker Compose and the local API load these settings; credentials remain on the server. Never commit `.env`. `GITHUB_TOKEN` is optional but helps avoid GitHub's anonymous API rate limit. `OPENAI_API_KEY` is optional.
 
 ### Windows Docker Desktop startup issue
 
@@ -42,18 +42,45 @@ Some Docker Desktop versions fail before the Linux engine starts because Windows
 
 ## Use the demo
 
-1. Open the workspace; the Atlas demo is loaded automatically.
+1. Open the workspace and explicitly load the optional Atlas demo, or add your own source.
 2. Ask: **What is blocking the public beta launch?**
 3. Inspect the three agent findings and connected source records.
 4. Prepare a follow-up task, then approve it on the Investigations screen.
 5. Ask a related question in a new browser session to see earlier investigation memory.
 6. Use **Add a source** to import a public GitHub repository or upload a document to the selected project. The selector lets you switch between projects.
 
-GitHub imports use the first page of issues and pull requests. On large repositories, this is a sample, not a complete repository analysis.
+## Connect your own sources
+
+Use **Add a source** to create a project or attach several sources to an existing project. Questions, suggestions, records, and evidence are based on the selected project. Sources show their last refresh time and coverage warnings. Use **Refresh** for GitHub or Jira; upload a file again with the same filename (or portable source name) to refresh it. Refresh is manual, not continuous synchronization. Partial imports retain older records outside the fetched sample; check timestamps and warnings before relying on answers.
+
+For Jira Cloud, put these values in your local `.env`, then recreate the app with `docker compose up --build -d`:
+
+```dotenv
+JIRA_BASE_URL=https://your-team.atlassian.net
+JIRA_EMAIL=your-account@example.com
+JIRA_API_TOKEN=your-token
+```
+
+The Jira tab accepts a ticket URL, a ticket key such as `TEAM-123`, or a project key such as `TEAM`. It imports accessible tickets, assignees, statuses, parent relationships, and explicit issue links. Jira references in other sources become candidate mentions, not confirmed dependencies. Live access requires valid credentials; automated tests use simulated Jira responses.
+
+Upload TXT, Markdown, PDF, DOCX, Jira JSON exports, or portable JSON for other tools. Native Slack, Notion, and other connectors are not implemented. Portable JSON uses this structure:
+
+```json
+{
+  "name": "Team tracker",
+  "entities": [
+    {"id": "task-1", "kind": "Task", "name": "Prepare launch", "status": "open"},
+    {"id": "person-1", "kind": "Person", "name": "Ada"}
+  ],
+  "links": [{"source": "person-1", "target": "task-1", "kind": "OWNS"}]
+}
+```
+
+IDs must be unique within the upload and all link endpoints must exist. Supported relations: `BLOCKS`, `DEPENDS_ON`, `REQUIRED_FOR`, `OWNS`, `OPENED`, `PART_OF`, `BELONGS_TO`, `RESOLVES`, `IMPLEMENTS`, `CHANGES`, `SUPPORTS`, `RELATED_TO`, `MENTIONS`. Confidence is `confirmed` or `candidate`. Files must be smaller than 5 MB; documents are limited to 200,000 characters and PDFs to 100 pages. README ingestion is limited to 48,000 characters. Large-source imports report their coverage limits.
 
 ## Graph model
 
-The `projectbrain` graph contains `Project`, `Entity`, `Investigation`, `Finding`, and `Proposal` nodes. `Entity.kind` identifies records such as `Task`, `Person`, `PullRequest`, `Milestone`, `Decision`, and `Document`. Project relationships use typed edges including `BLOCKS`, `REQUIRED_FOR`, `OWNS`, `IMPLEMENTS`, `CHANGES`, `SUPPORTS`, and `RESOLVES`. Each imported GitHub record keeps its source URL and update time. `Investigation` connects to `Finding` via `HAS_FINDING`; `Finding` connects to supporting `Entity` records via `SUPPORTED_BY`.
+The `projectbrain` graph contains `Project`, `Source`, `Entity`, `Investigation`, `Finding`, and `Proposal` nodes. `Entity.kind` identifies records such as `Task`, `Person`, `PullRequest`, `Milestone`, `Decision`, and `Document`. Project relationships use typed edges including `BLOCKS`, `REQUIRED_FOR`, `OWNS`, `IMPLEMENTS`, `CHANGES`, `SUPPORTS`, and `RESOLVES`. Each imported GitHub record keeps its source URL and update time. `Investigation` connects to `Finding` via `HAS_FINDING`; `Finding` connects to supporting `Entity` records via `SUPPORTED_BY`.
 
 Core Cypher queries include:
 
@@ -78,12 +105,12 @@ This retrieves cross-session memory. Findings and evidence are stored separately
 
 ```text
 Browser UI → FastAPI → investigation orchestrator → bounded graph tools → FalkorDB
-                    ↘ public GitHub importer ↗
+                    ↘ GitHub / Jira / file adapters ↗
 ```
 
 The orchestrator ranks question-relevant records, traverses graph edges, and saves independent dependency, ownership, knowledge, and memory findings. The optional LLM only writes an answer from those findings. The graph remains authoritative for links and source provenance.
 
-The connector boundary accepts normalized `Entity` and `Link` records through `ProjectData`. The document adapter extracts sections and identifies candidate mentions; future Jira and private-source adapters require authentication, permission rules, refresh logic, and entity resolution before handling real organizations.
+The connector boundary accepts normalized `Entity` and `Link` records through `ProjectData`. Adapters normalize GitHub, Jira, documents, and portable records. Sources carry stable identities and refresh metadata. Organization-wide deployment still requires authentication, permissions, durable jobs, transactional refresh, and operational monitoring.
 
 ## Tests
 
@@ -92,7 +119,7 @@ pytest -q
 node --check web/app.js
 ```
 
-An end-to-end check requires FalkorDB running. The project does not silently fall back to a mock store: `/api/health` reports `waiting` and graph endpoints return 503 when FalkorDB is unavailable.
+Run database integration tests against a running FalkorDB with `$env:RUN_GRAPH_TESTS="1"; pytest -q` in PowerShell. Each test uses a separate temporary graph and deletes only that graph. An end-to-end check requires FalkorDB running. The project does not silently fall back to a mock store: `/api/health` reports `waiting` and graph endpoints return 503 when FalkorDB is unavailable.
 
 ## Hackathon alignment
 

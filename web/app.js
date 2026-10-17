@@ -1,5 +1,8 @@
 const state = {
-  project: 'atlas',
+  project: localStorage.getItem('projectbrain-project') || '',
+  projects: [],
+  loading: 0,
+  asking: false,
   graph: null,
   lastInvestigation: null,
   session: sessionStorage.getItem('projectbrain-session') || crypto.randomUUID(),
@@ -14,8 +17,11 @@ const recordIcon = { Project: '▣', Milestone: '◇', Task: '☑', PullRequest:
 
 async function api(path, options = {}) {
   const response = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...options });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+  const data = await response.json().catch(() => ({ detail: 'The server could not complete the request. Please try again.' }));
+  if (!response.ok) {
+    const detail = Array.isArray(data.detail) ? data.detail.map((item) => item.msg).join('; ') : data.detail;
+    throw new Error(detail || `Request failed (${response.status})`);
+  }
   return data;
 }
 
@@ -48,16 +54,22 @@ async function loadProjects() {
     setConnectionStatus(health.graph === 'connected');
     if (health.graph !== 'connected') return;
 
-    let projects = await api('/api/projects');
-    if (!projects.length) {
-      await api('/api/demo/seed', { method: 'POST' });
-      projects = await api('/api/projects');
-    }
+    const projects = await api('/api/projects');
+    state.projects = projects;
+    $('empty-workspace').hidden = projects.length > 0;
+    $('import-destination').innerHTML = '<option value="">Create a project from this source</option>' + projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join('');
 
     const selector = $('project-select');
     selector.innerHTML = projects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join('');
+    if (!projects.length) {
+      state.project = '';
+      state.graph = null;
+      selector.innerHTML = '<option value="">Add your first project</option>';
+      return;
+    }
     if (!projects.some((project) => project.id === state.project)) state.project = projects[0].id;
     selector.value = state.project;
+    localStorage.setItem('projectbrain-project', state.project);
     await loadGraph();
   } catch (error) {
     setConnectionStatus(false);
@@ -66,8 +78,13 @@ async function loadProjects() {
 }
 
 async function loadGraph() {
+  const version = ++state.loading;
+  const project = state.project;
+  if (!project) return;
   try {
-    state.graph = await api(`/api/projects/${encodeURIComponent(state.project)}/graph`);
+    const graph = await api(`/api/projects/${encodeURIComponent(project)}/graph`);
+    if (version !== state.loading || project !== state.project) return;
+    state.graph = graph;
     renderHome();
     renderRecords();
     renderHistory();
@@ -82,12 +99,38 @@ function renderHome() {
   $('project-name').textContent = project.name;
   $('metric-nodes').textContent = nodes.length;
   $('metric-investigations').textContent = investigations.length;
+  $('project-description').textContent = project.description || 'Work connected to this project.';
+  const questions = projectQuestions(nodes);
+  $('project-suggestions').innerHTML = questions.length ? '<span>From your project</span>' + questions.map((question) => `<button data-question="${escapeHtml(question)}">${escapeHtml(question)}</button>`).join('') : '<span>Add records to get questions tailored to this project.</span>';
+  if ($('chat-suggestions')) $('chat-suggestions').innerHTML = questions.slice(0, 2).map((question) => `<button data-question="${escapeHtml(question)}">${escapeHtml(question)} →</button>`).join('');
+  renderSources();
 
   const concerns = nodes.filter((node) => /blocked|at risk/i.test(node.status || ''));
   $('metric-blockers').textContent = concerns.length;
   $('signals').innerHTML = concerns.length
     ? concerns.slice(0, 4).map((node) => `<div class="attention-item"><span class="attention-badge">!</span><div><strong>${escapeHtml(node.name)}</strong><p>${escapeHtml(node.description || `Status: ${node.status}`)}</p></div></div>`).join('')
     : '<div class="empty-list">No blocked or at-risk items in the connected records.</div>';
+}
+
+function projectQuestions(nodes) {
+  if (!nodes.length) return [];
+  const questions = [];
+  const task = nodes.find((node) => node.kind === 'Task' && /block/i.test(node.status || '')) || nodes.find((node) => node.kind === 'Task');
+  const document = nodes.find((node) => node.kind === 'Document');
+  const pr = nodes.find((node) => node.kind === 'PullRequest');
+  if (task) questions.push(`What is the status of ${task.name.slice(0, 100)}?`);
+  if (document) questions.push(`Summarize ${document.name.slice(0, 100)}`);
+  if (pr) questions.push(`Explain ${pr.name.slice(0, 100)}`);
+  if (questions.length < 3) questions.push('Give me an overview of this project');
+  return questions.slice(0, 3);
+}
+
+function renderSources() {
+  const sources = state.graph?.sources || [];
+  $('source-list').innerHTML = sources.length ? sources.map((source) => `
+    <div class="source-entry"><div><strong>${escapeHtml(source.name)}</strong><p>${escapeHtml(source.kind)} · ${source.record_count} records · Imported ${escapeHtml(new Date(source.synced_at).toLocaleString())}</p>
+    ${(source.warnings || []).map((warning) => `<p class="source-warning">${escapeHtml(warning)}</p>`).join('')}</div>
+    ${['github', 'jira'].includes(source.kind) ? `<button class="secondary-button" data-sync="${escapeHtml(source.id)}">Refresh source</button>` : '<span>File snapshot</span>'}</div>`).join('') : '<div class="empty-list">No tracked sources yet. Add a source to start importing your work.</div>';
 }
 
 function renderRecords() {
@@ -168,18 +211,25 @@ function renderEvidence(result) {
     return `<div class="trace-path">${escapeHtml(first.name)} <b>— ${escapeHtml(edge.kind.replaceAll('_', ' ').toLowerCase())} →</b> ${escapeHtml(second.name)}${edge.confidence === 'candidate' ? ' <i>(possible match)</i>' : ''}</div>`;
   }).join('');
   $('trace-content').innerHTML = findings + (paths ? `<div class="trace-item"><small>Connections used</small>${paths}</div>` : '') || '<div class="empty-list">No evidence found in connected sources.</div>';
+  if (result.coverage) $('trace-content').insertAdjacentHTML('afterbegin', `<p class="coverage-note">${escapeHtml(result.coverage)}</p>`);
 }
 
 async function askQuestion() {
+  if (state.asking) return;
+  if (!state.project || !state.graph?.nodes.length) return toast('Add a source with records to this project first.');
   const question = $('question-input').value.trim();
   if (!question) return;
+  state.asking = true;
+  const project = state.project;
   $('question-input').value = '';
   showView('assistant');
   appendMessage('user', question);
   const pending = appendMessage('assistant', 'Checking the connected project records…');
   $('ask-button').disabled = true;
+  $('project-select').disabled = true;
   try {
-    const result = await api('/api/investigations', { method: 'POST', body: JSON.stringify({ project_id: state.project, question, session_id: state.session }) });
+    const result = await api('/api/investigations', { method: 'POST', body: JSON.stringify({ project_id: project, question, session_id: state.session }) });
+    if (state.project !== project) { pending.remove(); return; }
     state.lastInvestigation = result.id;
     pending.remove();
     const extra = result.id ? `<div class="message-actions"><button data-followup="${escapeHtml(result.id)}">Suggest a follow-up task</button></div>` : '';
@@ -189,7 +239,7 @@ async function askQuestion() {
   } catch (error) {
     pending.remove();
     appendMessage('assistant', `I could not complete that question: ${error.message}`);
-  } finally { $('ask-button').disabled = false; }
+  } finally { state.asking = false; $('ask-button').disabled = false; $('project-select').disabled = false; }
 }
 
 async function proposeFollowup(investigationId) {
@@ -204,33 +254,97 @@ async function proposeFollowup(investigationId) {
 
 async function importRepository() {
   const url = $('repo-url').value.trim();
-  if (!url) return toast('Enter a public GitHub repository URL.');
-  $('import-repo').disabled = true;
+  if (!url) return toast('Enter a GitHub repository URL.');
+  setImportBusy(true, 'Reading repository pages and building connections…');
   try {
-    const result = await api('/api/projects/import/github', { method: 'POST', body: JSON.stringify({ url }) });
+    const result = await api('/api/projects/import/github', { method: 'POST', body: JSON.stringify({ url, project_id: $('import-destination').value || null }) });
     $('source-dialog').close();
-    state.project = result.project_id;
+    changeProject(result.project_id);
     toast(`Added ${result.nodes} records from GitHub.`);
     await loadProjects();
-  } catch (error) { toast(error.message); }
-  finally { $('import-repo').disabled = false; }
+  } catch (error) { $('import-feedback').textContent = error.message; }
+  finally { setImportBusy(false); }
 }
 
 async function uploadDocument() {
   const file = $('document-file').files[0];
   if (!file) return toast('Choose a document first.');
-  $('upload-document').disabled = true;
+  const project = $('import-destination').value;
+  if (!project) return toast('Select or create a project for this file.');
+  if (file.size > 5 * 1024 * 1024) return toast('Choose a file smaller than 5 MB.');
+  setImportBusy(true, 'Reading your file and connecting its records…');
   try {
     const form = new FormData();
     form.append('file', file);
-    const response = await fetch(`/api/projects/${encodeURIComponent(state.project)}/documents`, { method: 'POST', body: form });
-    const result = await response.json();
+    const response = await fetch(`/api/projects/${encodeURIComponent(project)}/imports`, { method: 'POST', body: form });
+    const result = await response.json().catch(() => ({detail: 'The server could not read this file.'}));
     if (!response.ok) throw new Error(result.detail || 'Could not add the document');
     $('source-dialog').close();
-    toast(`Added ${result.nodes} document records to the project.`);
+    changeProject(project);
+    toast(`Imported ${result.nodes} records into the project.`);
+    await loadProjects();
+  } catch (error) { $('import-feedback').textContent = error.message; }
+  finally { setImportBusy(false); }
+}
+
+function setImportBusy(busy, message) {
+  $('source-dialog').querySelectorAll('button, input, select').forEach((element) => { element.disabled = busy; });
+  if (message) $('import-feedback').textContent = message;
+}
+
+function changeProject(id) {
+  if (state.project === id) return;
+  state.project = id;
+  state.graph = null;
+  state.lastInvestigation = null;
+  state.loading++;
+  localStorage.setItem('projectbrain-project', id);
+  $('chat-log').innerHTML = '<div class="welcome-message"><h2>Ask about this project</h2><p>Your answers will use the sources connected to this project.</p><div class="suggestions" id="chat-suggestions"></div></div>';
+  $('trace-count').textContent = 'No question asked yet';
+  $('trace-content').className = 'trace-empty';
+  $('trace-content').textContent = 'Evidence from this project will appear here.';
+  $('graph-detail').innerHTML = '<div class="detail-empty">Select a record to see its details.</div>';
+  $('graph-list').innerHTML = '';
+  $('project-name').textContent = 'Loading project…';
+  $('project-description').textContent = '';
+  $('source-list').innerHTML = '';
+  $('signals').innerHTML = '';
+  $('project-suggestions').innerHTML = '';
+  ['metric-nodes', 'metric-investigations', 'metric-blockers'].forEach((key) => { $(key).textContent = '—'; });
+  $('history-list').innerHTML = '';
+  $('proposal-list').innerHTML = '';
+  $('graph-search').value = '';
+}
+
+function openSources() {
+  $('import-destination').value = state.project || '';
+  $('import-feedback').textContent = '';
+  $('source-dialog').showModal();
+}
+
+async function importJira() {
+  const reference = $('jira-reference').value.trim();
+  if (!reference) return toast('Enter a Jira ticket URL, ticket key, or project key.');
+  setImportBusy(true, 'Reading Jira tickets and their relationships…');
+  try {
+    const result = await api('/api/projects/import/jira', { method: 'POST', body: JSON.stringify({ reference, project_id: $('import-destination').value || null }) });
+    changeProject(result.project_id);
+    $('source-dialog').close();
+    await loadProjects();
+    toast(`Imported ${result.nodes} Jira records.`);
+  } catch (error) { $('import-feedback').textContent = error.message; }
+  finally { setImportBusy(false); }
+}
+
+async function syncSource(button) {
+  button.disabled = true;
+  button.textContent = 'Refreshing…';
+  try {
+    await api('/api/sources/sync', { method: 'POST', body: JSON.stringify({ project_id: state.project, source_id: button.dataset.sync }) });
     await loadGraph();
+    toast('Source refreshed. New questions will use the updated records.');
   } catch (error) { toast(error.message); }
-  finally { $('upload-document').disabled = false; }
+  finally { button.disabled = false; button.textContent = 'Refresh source'; }
 }
 
 document.querySelectorAll('[data-view]').forEach((element) => element.addEventListener('click', () => showView(element.dataset.view)));
@@ -244,6 +358,13 @@ document.addEventListener('click', (event) => {
   if (decision) decideProposal(decision.dataset.decision, decision.dataset.approved === 'true');
   const followup = event.target.closest('[data-followup]');
   if (followup) proposeFollowup(followup.dataset.followup);
+  const sync = event.target.closest('[data-sync]');
+  if (sync) syncSource(sync);
+  const tab = event.target.closest('[data-source-tab]');
+  if (tab) {
+    document.querySelectorAll('[data-source-tab]').forEach((element) => element.classList.toggle('active', element === tab));
+    document.querySelectorAll('[data-source-pane]').forEach((element) => { element.hidden = element.dataset.sourcePane !== tab.dataset.sourceTab; });
+  }
 });
 $('quick-ask-form').addEventListener('submit', (event) => {
   event.preventDefault();
@@ -256,11 +377,37 @@ $('question-input').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askQuestion(); }
 });
 $('graph-search').addEventListener('input', renderRecords);
-$('project-select').addEventListener('change', (event) => { state.project = event.target.value; loadGraph(); });
+$('project-select').addEventListener('change', (event) => { changeProject(event.target.value); loadGraph(); });
 $('refresh').addEventListener('click', loadProjects);
-$('add-source').addEventListener('click', () => $('source-dialog').showModal());
-$('top-add-source').addEventListener('click', () => $('source-dialog').showModal());
+$('add-source').addEventListener('click', openSources);
+$('top-add-source').addEventListener('click', openSources);
+$('empty-add-source').addEventListener('click', openSources);
 $('import-repo').addEventListener('click', importRepository);
+$('import-jira').addEventListener('click', importJira);
 $('upload-document').addEventListener('click', uploadDocument);
+$('create-project').addEventListener('click', async () => {
+  const name = $('new-project-name').value.trim();
+  if (name.length < 2) return toast('Give the project a name with at least two characters.');
+  setImportBusy(true, 'Creating project…');
+  try {
+    const result = await api('/api/projects', { method: 'POST', body: JSON.stringify({ name }) });
+    changeProject(result.project_id);
+    await loadProjects();
+    $('import-destination').value = state.project;
+    $('import-feedback').textContent = 'Project created. Now choose a source to add.';
+  } catch (error) { $('import-feedback').textContent = error.message; }
+  finally { setImportBusy(false); }
+});
+$('load-demo').addEventListener('click', async () => {
+  $('load-demo').disabled = true;
+  try { const result = await api('/api/demo/seed', { method: 'POST' }); changeProject(result.project_id); await loadProjects(); }
+  catch (error) { toast(error.message); }
+  finally { $('load-demo').disabled = false; }
+});
+api('/api/connectors').then((config) => {
+  $('jira-config-status').textContent = config.jira_configured ? 'Jira Cloud is connected. Import a ticket or all visible tickets from a project.' : 'Jira Cloud needs server credentials. Expand the setup instructions below.';
+  $('github-config-status').textContent = config.github_authenticated ? 'Server token configured. Repositories are limited to its permissions.' : 'Public repositories work now. Private repositories require a server GITHUB_TOKEN.';
+  $('answer-mode').textContent = config.answer_mode === 'model' ? 'AI answers with source evidence' : 'Evidence mode · source excerpts and connections';
+}).catch(() => {});
 $('topbar-date').textContent = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date());
 loadProjects();

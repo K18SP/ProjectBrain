@@ -1,6 +1,7 @@
 services:
   falkordb:
     image: falkordb/falkordb:latest
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
       - "127.0.0.1:3000:3000"
@@ -15,6 +16,7 @@ services:
       retries: 10
   app:
     build: .
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
     environment:
@@ -23,6 +25,15 @@ services:
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
+      JIRA_EMAIL: ${JIRA_EMAIL:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      IMPORT_MAX_RECORDS: ${IMPORT_MAX_RECORDS:-1000}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5))['graph']=='connected'"]
+      interval: 30s
+      timeout: 8s
+      retries: 3
     depends_on:
       falkordb:
         condition: service_healthy

@@ -25,15 +25,16 @@
 
       <div class="sidebar-sources">
         <p class="sidebar-label">ADD PROJECT DATA</p>
-        <div class="source-row"><span class="source-symbol">⌘</span><span>GitHub</span><small>Public repos</small></div>
+        <div class="source-row"><span class="source-symbol">⌘</span><span>GitHub</span><small>Repositories</small></div>
+        <div class="source-row"><span class="source-symbol">◈</span><span>Jira Cloud</span><small>Tickets</small></div>
         <div class="source-row"><span class="source-symbol">▤</span><span>Documents</span><small>Files</small></div>
         <button class="source-add" id="add-source">+ Add a source</button>
-        <p class="source-hint">Jira integration is coming later.</p>
+        <p class="source-hint">Combine sources in one project to connect their records.</p>
       </div>
 
       <div class="sidebar-bottom">
         <div class="connection-status"><span class="status-dot" id="status-dot"></span><span id="db-status">Checking connection…</span></div>
-        <p>ProjectBrain demo</p>
+        <p id="answer-mode">Connected project workspace</p>
       </div>
     </aside>
 
@@ -56,6 +57,7 @@
       </div>
 
       <div class="content">
+        <div class="onboarding-notice" id="empty-workspace" hidden><strong>Start with your own project.</strong><p>Add a repository or Jira ticket, or create a project and upload your files.</p><button class="primary-button" id="empty-add-source">Add your first source</button><button class="text-button" id="load-demo">Explore an optional example</button></div>
         <section id="view-overview" class="view active" aria-labelledby="home-heading">
           <div class="home-hero">
             <span class="eyebrow">YOUR PROJECT, EXPLAINED</span>
@@ -66,21 +68,19 @@
               <input id="quick-question" type="text" placeholder="For example: What is blocked?" />
               <button type="submit">Ask question <span aria-hidden="true">→</span></button>
             </form>
-            <div class="question-examples"><span>Try asking</span>
-              <button data-question="What is blocked in this project?">What is blocked?</button>
-              <button data-question="Who owns the current work?">Who owns the work?</button>
-              <button data-question="Why were the recent decisions made?">Why these decisions?</button>
-            </div>
+            <div class="question-examples" id="project-suggestions"></div>
           </div>
 
           <div class="home-content">
             <div class="section-title"><div><span class="eyebrow">PROJECT SNAPSHOT</span><h2 id="project-name">Your project</h2></div><button class="quiet-link" data-go="graph">Explore all records →</button></div>
-            <p class="section-description">A quick look at the work connected to this project.</p>
+            <p class="section-description" id="project-description">Add a source to get started.</p>
             <div class="summary-grid">
               <div class="summary-card"><span class="summary-icon warning">!</span><div><strong id="metric-blockers">—</strong><span>items need attention</span></div></div>
               <div class="summary-card"><span class="summary-icon records">▤</span><div><strong id="metric-nodes">—</strong><span>project records</span></div></div>
               <div class="summary-card"><span class="summary-icon history">◷</span><div><strong id="metric-investigations">—</strong><span>past questions</span></div></div>
             </div>
+
+            <section class="panel sources-panel"><div class="panel-heading"><h3>Connected sources</h3><span>Refresh to pull the latest changes</span></div><div id="source-list" class="history-list"><div class="empty-list">No sources connected yet.</div></div></section>
 
             <div class="home-columns">
               <section class="panel" aria-labelledby="attention-heading">
@@ -106,7 +106,7 @@
               <div class="chat-header"><span class="assistant-avatar">✳</span><div><strong>ProjectBrain</strong><small>Ready to investigate your project</small></div></div>
               <div class="chat-log" id="chat-log" aria-live="polite">
                 <div class="welcome-message"><h2>What would you like to know?</h2><p>Here are a couple of questions to get started:</p>
-                  <div class="suggestions"><button data-question="What is blocked in this project?">What is blocked? →</button><button data-question="Who owns the current work?">Who owns the work? →</button></div>
+                  <div class="suggestions" id="chat-suggestions"></div>
                 </div>
               </div>
               <form id="ask-form" class="ask-form"><label class="sr-only" for="question-input">Your question</label><textarea id="question-input" rows="2" placeholder="Ask about tasks, owners, decisions, or past work…"></textarea><div class="ask-footer"><span>Press Enter to ask · Shift + Enter for a new line</span><button type="submit" id="ask-button">Ask →</button></div></form>
@@ -138,9 +138,14 @@
       <button class="dialog-close" aria-label="Close">×</button>
       <span class="eyebrow">ADD PROJECT DATA</span>
       <h2 id="source-dialog-heading">Add a source</h2>
-      <p>Add a public GitHub repository as a project, or add a document to the project you have selected.</p>
-      <div class="source-option"><label for="repo-url">Public GitHub repository URL</label><input id="repo-url" type="url" placeholder="https://github.com/owner/repository" /><button id="import-repo" type="button" class="primary-button">Import repository</button></div>
-      <div class="source-option"><label for="document-file">Project document</label><p>TXT, Markdown, PDF, or Word · up to 5 MB</p><input id="document-file" type="file" accept=".txt,.md,.pdf,.docx" /><button id="upload-document" type="button" class="secondary-button">Add to current project</button></div>
+      <p>Import your work, then ask questions about it. Sources are read only.</p>
+      <label class="destination-label" for="import-destination">Add to project</label><select id="import-destination"><option value="">Create a project from this source</option></select>
+      <details class="create-project"><summary>Create an empty project for files or multiple sources</summary><label for="new-project-name" class="sr-only">Project name</label><input id="new-project-name" placeholder="Name your project" maxlength="120" /><button type="button" id="create-project" class="secondary-button">Create project</button></details>
+      <div class="source-tabs" role="group" aria-label="Source type"><button type="button" class="active" data-source-tab="github">GitHub</button><button type="button" data-source-tab="jira">Jira Cloud</button><button type="button" data-source-tab="file">Files & other tools</button></div>
+      <div class="source-option" data-source-pane="github"><label for="repo-url">GitHub repository URL</label><p id="github-config-status">Import issues, pull requests, assignees, milestones and README.</p><input id="repo-url" type="url" placeholder="https://github.com/owner/repository" /><button id="import-repo" type="button" class="primary-button">Import repository</button></div>
+      <div class="source-option" data-source-pane="jira" hidden><label for="jira-reference">Jira ticket URL, ticket key, or project key</label><p id="jira-config-status"></p><input id="jira-reference" placeholder="TEAM-123 or TEAM" /><button id="import-jira" type="button" class="primary-button">Import from Jira</button><details><summary>How to connect Jira Cloud</summary><p>Set your site's JIRA_BASE_URL, JIRA_EMAIL, and JIRA_API_TOKEN in the server's .env file, then restart the app. The token stays on the server. Jira access is limited to what that account can read.</p></details></div>
+      <div class="source-option" data-source-pane="file" hidden><label for="document-file">Document or records export</label><p>TXT, Markdown, PDF, Word, Jira JSON, or portable records JSON · up to 5 MB. Select an existing project above.</p><input id="document-file" type="file" accept=".txt,.md,.pdf,.docx,.json" /><button id="upload-document" type="button" class="secondary-button">Import file</button><details><summary>Connect another tool with JSON</summary><p>Export an object with a source name, entities, and links. See the portable records example in the README. Uploaded documents are also searchable and can reference Jira ticket keys.</p></details></div>
+      <p id="import-feedback" role="status" aria-live="polite"></p>
     </form>
   </dialog>
   <script src="/assets/app.js"></script>

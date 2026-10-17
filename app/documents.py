@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
-from uuid import uuid4
+from hashlib import sha256
+import zipfile
 
 from docx import Document
 from pypdf import PdfReader
@@ -23,13 +24,22 @@ def extract_document(filename: str, payload: bytes) -> str:
     if suffix in {".txt", ".md"}:
         return payload.decode("utf-8", errors="replace")
     if suffix == ".pdf":
-        return "\n".join(page.extract_text() or "" for page in PdfReader(BytesIO(payload)).pages[:40])
+        reader = PdfReader(BytesIO(payload))
+        if len(reader.pages) > 100:
+            raise ValueError("Split PDFs longer than 100 pages into smaller documents")
+        return "\n".join(page.extract_text() or "" for page in reader.pages)
+    with zipfile.ZipFile(BytesIO(payload)) as archive:
+        if sum(item.file_size for item in archive.infolist()) > 30 * 1024 * 1024:
+            raise ValueError("The expanded Word document exceeds the 30 MB limit")
     return "\n".join(p.text for p in Document(BytesIO(payload)).paragraphs)
 
 
 def document_project_data(project_id: str, project_name: str, project_description: str, filename: str, text: str,
                           existing: list[dict]) -> ProjectData:
-    document_id = f"document:{uuid4()}"
+    filename = Path(filename).name
+    document_id = "document:" + sha256(f"{project_id}:{filename}".encode()).hexdigest()[:24]
+    if len(text) > 200000:
+        raise ValueError("Split documents longer than 200,000 characters into smaller files")
     entities = [Entity(id=document_id, kind="Document", name=Path(filename).name,
                        source="upload", description=text[:1800])]
     links: list[Link] = []
@@ -41,10 +51,13 @@ def document_project_data(project_id: str, project_name: str, project_descriptio
         if len(current) + len(paragraph) > 850 and current:
             chunks.append(current)
             current = ""
-        current += ("\n" if current else "") + paragraph[:850]
+        while len(paragraph) > 850:
+            chunks.append(paragraph[:850])
+            paragraph = paragraph[850:]
+        current += ("\n" if current else "") + paragraph
     if current:
         chunks.append(current)
-    for index, chunk in enumerate(chunks[:30]):
+    for index, chunk in enumerate(chunks):
         section_id = f"{document_id}:section:{index + 1}"
         entities.append(Entity(id=section_id, kind="DocumentSection", name=f"{Path(filename).name} · section {index + 1}",
                                source="upload", description=chunk))
@@ -55,4 +68,4 @@ def document_project_data(project_id: str, project_name: str, project_descriptio
                 links.append(Link(source=section_id, target=entity["id"], kind="MENTIONS",
                                   confidence="candidate"))
     return ProjectData(project_id=project_id, name=project_name, description=project_description,
-                       entities=entities, links=links)
+                       entities=entities, links=links, source_id=document_id, source_kind="document", source_name=filename)
