@@ -29,6 +29,6 @@ Track 1 is the closest fit, but MCP tool selection and a convincing graph-driven
 
 ## Validation and next demonstration
 
-Regression tests cover missing README ingestion, Python import links, label-only answers, file refresh, source isolation, and persisted evidence. The repository from the reported failure was reimported with real code. Jira is tested with simulated responses; live credentials are still absent. AI synthesis is not validated without a configured provider key.
+Regression tests cover missing README ingestion, Python import links, label-only answers, file refresh, source isolation, and persisted evidence. The repository from the reported failure was reimported with real code. Jira is tested with simulated responses; live credentials are still absent. Free-only OpenRouter synthesis was subsequently configured and verified with a live repository question. Paid fallback is disabled and tested.
 
-Before submission, configure and verify synthesis, demonstrate a real dependency investigation with an approved local action and a later-session recall, record that workflow, and complete the registration/submission form. Production work remains: authentication, permissions, durable import jobs, transactional refresh, and operational monitoring.
+Before submission, demonstrate a real dependency investigation with an approved local action and a later-session recall, record that workflow, and complete the registration/submission form. Production work remains: authentication, permissions, durable import jobs, transactional refresh, and operational monitoring.

@@ -212,7 +212,7 @@ function renderEvidence(result) {
     return `<div class="trace-path">${escapeHtml(first.name)} <b>— ${escapeHtml(edge.kind.replaceAll('_', ' ').toLowerCase())} →</b> ${escapeHtml(second.name)}${edge.confidence === 'candidate' ? ' <i>(possible match)</i>' : ''}</div>`;
   }).join('');
   $('trace-content').innerHTML = findings + (paths ? `<div class="trace-item"><small>Connections explored</small>${paths}</div>` : '') || '<div class="empty-list">No evidence found in connected sources.</div>';
-  $('chat-answer-mode').textContent = result.mode === 'model' ? 'AI answer grounded in your sources' : 'Source evidence · no AI synthesis';
+  $('chat-answer-mode').textContent = result.mode === 'model' ? 'Free AI answer · OpenRouter' : 'Source evidence · free AI unavailable';
   if (result.coverage) $('trace-content').insertAdjacentHTML('afterbegin', `<p class="coverage-note">${escapeHtml(result.coverage)}</p>`);
 }
 
@@ -409,7 +409,7 @@ api('/api/connectors').then((config) => {
   $('jira-config-status').textContent = config.jira_configured ? 'Jira Cloud is connected. Import a ticket or all visible tickets from a project.' : 'Jira Cloud needs server credentials. Expand the setup instructions below.';
   $('github-config-status').textContent = config.github_authenticated ? 'Server token configured. Repositories are limited to its permissions.' : 'Public repositories work now. Private repositories require a server GITHUB_TOKEN.';
   $('answer-mode').textContent = config.answer_mode === 'model' ? 'AI answers with source evidence' : 'Evidence mode · source excerpts and connections';
-  $('chat-answer-mode').textContent = config.answer_mode === 'model' ? 'AI answers grounded in your sources' : 'Source evidence mode · AI key not configured';
+  $('chat-answer-mode').textContent = config.answer_mode === 'model' ? 'Free AI · OpenRouter · grounded in your sources' : 'Source evidence mode · AI key not configured';
 }).catch(() => {});
 $('topbar-date').textContent = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date());
 loadProjects();

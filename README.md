@@ -10,7 +10,7 @@ ProjectBrain is a graph-backed project investigation workspace built for **Graph
 - Read-only paginated import of GitHub issues, pull requests, assignees, milestones, and README sections. The default is up to 1,000 work records, configurable with `IMPORT_MAX_RECORDS` (maximum 5,000). Explicit `fixes #N`, `closes #N`, `resolves #N`, `blocked by #N`, and `depends on #N` references become relationships when both records are present.
 - FalkorDB-backed project records, relationships, investigation findings, prior-session recall, and local action proposals.
 - Dynamic natural-language question handling. The agent ranks relevant entities, traverses their FalkorDB relationships up to three hops, and combines dependency, ownership, knowledge, and memory findings.
-- Optional model-generated wording with `OPENAI_API_KEY`; without a key, deterministic evidence-based wording still works.
+- Optional model-generated wording with `OPENROUTER_API_KEY`; without a key, deterministic evidence-based wording still works.
 
 **Current boundaries:** This is a local prototype, not a production deployment. The local API has no user authentication or tenant isolation. Imports run within requests rather than a durable background queue, and graph refreshes are not transactional. Keep it bound to localhost and use public or synthetic data. GitHub and Jira connectors are read-only; approved proposals stay inside ProjectBrain. GitHub code import is bounded; PR diffs, comments, and attachments are not imported. Retrieval uses keyword ranking and bounded graph traversal; an optional model writes from the retrieved evidence. It cannot guarantee answers to every question.
 
@@ -34,7 +34,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Copy `.env.example` to `.env` if you want to set credentials. Docker Compose and the local API load these settings; credentials remain on the server. Never commit `.env`. `GITHUB_TOKEN` is optional but helps avoid GitHub's anonymous API rate limit. `OPENAI_API_KEY` is optional.
+Copy `.env.example` to `.env` if you want to set credentials. Docker Compose and the local API load these settings; credentials remain on the server. Never commit `.env`. `GITHUB_TOKEN` is optional but helps avoid GitHub's anonymous API rate limit. `OPENROUTER_API_KEY` is optional.
 
 ### Windows Docker Desktop startup issue
 
@@ -130,6 +130,10 @@ AI coding assistance was used in developing this project. The submitter should r
 
 A repository with no README still imports a file listing and selected code. Up to 500 eligible file records and content for 24 prioritized files (each at most 40 KB) are imported. Generated/vendor folders and common credential filenames are excluded; this is not a secret scanner. Python imports become explicit `IMPORTS` edges; code sections retain file/line links. Other languages are searchable text. No imported code runs. Selection is bounded, not an exhaustive code audit, and coverage appears beside each answer.
 
-Without `OPENAI_API_KEY`, chat shows source excerpts and connections. This mode does not provide free-form AI synthesis. For AI-written explanations, configure that key in local `.env` and recreate the app. A provider failure falls back visibly to source evidence. Missing source content produces an explicit limitation instead of a repository-name-only answer.
+Without `OPENROUTER_API_KEY`, chat shows source excerpts and connections. This mode does not provide free-form AI synthesis. For AI-written explanations, configure that key in local `.env` and recreate the app. A provider failure falls back visibly to source evidence. Missing source content produces an explicit limitation instead of a repository-name-only answer.
 
 See [HACKATHON_AUDIT.md](HACKATHON_AUDIT.md) for the implementation and submission gaps. The standard HTML/CSS/JavaScript files are the UI application, not hardcoded project data.
+
+## Free-only OpenRouter
+
+Set `OPENROUTER_API_KEY` in the ignored local `.env` file and recreate the app. Model routing is fixed in code to `openrouter/free`, with maximum prompt and completion prices set to zero. No paid model or OpenAI fallback is available. If free capacity, quota, or credentials are unavailable, the app shows source evidence instead. Account-level free limits still apply. Keys are not returned by the API or copied into the Docker image.

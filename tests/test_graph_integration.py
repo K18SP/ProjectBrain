@@ -15,7 +15,7 @@ from app.schema import Entity, Link, ProjectData
 def graph(monkeypatch):
     if os.getenv('RUN_GRAPH_TESTS') != '1':
         pytest.skip('Set RUN_GRAPH_TESTS=1 with FalkorDB running')
-    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    monkeypatch.delenv('OPENROUTER_API_KEY', raising=False)
     store = GraphStore()
     name = f'projectbrain_test_{uuid4().hex}'
     store.graph = store.db.select_graph(name)

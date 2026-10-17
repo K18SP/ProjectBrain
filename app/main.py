@@ -112,7 +112,8 @@ def create_project(request: CreateProjectRequest):
 def connectors():
     return {"github_authenticated": bool(os.getenv("GITHUB_TOKEN")),
             "jira_configured": all(os.getenv(key) for key in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")),
-            "answer_mode": "model" if os.getenv("OPENAI_API_KEY") else "evidence"}
+            "ai_provider": "OpenRouter", "ai_model": "openrouter/free", "free_only": True,
+            "answer_mode": "model" if os.getenv("OPENROUTER_API_KEY") else "evidence"}
 
 
 @app.get("/api/projects/{project_id:path}/graph")
