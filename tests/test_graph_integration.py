@@ -87,3 +87,21 @@ def test_cross_source_ticket_mentions_are_candidates(graph):
         {'id': 'doc', 'kind': 'Document', 'name': 'Review', 'description': 'Discuss ORB-1 before release.'}]}))
     mentions = [link for link in graph.links('orion') if link['kind'] == 'MENTIONS']
     assert len(mentions) == 1 and mentions[0]['confidence'] == 'candidate'
+
+
+def test_repository_label_is_not_an_answer(graph):
+    graph.import_project(ProjectData(project_id='empty', name='Empty', entities=[Entity(id='repo', kind='Repository', name='Empty')], links=[]))
+    answer = asyncio.run(investigate(graph, 'empty', 'Explain what this repo is about', 'test'))
+    assert 'not enough source content' in answer['answer']
+
+
+def test_code_question_uses_connected_content(graph):
+    graph.import_project(ProjectData(project_id='code', name='Code', entities=[
+        Entity(id='repo', kind='Repository', name='Team/code'),
+        Entity(id='file', kind='CodeFile', name='pipeline.py', description='RetrievalPipeline: Retrieves documents then generates an answer.'),
+        Entity(id='section', kind='CodeSection', name='pipeline.py lines 1-20', description='retrieved = retriever.search(question)\nanswer = generator.generate(retrieved)')],
+        links=[Link(source='file', target='repo', kind='PART_OF'), Link(source='section', target='file', kind='PART_OF')]))
+    answer = asyncio.run(investigate(graph, 'code', 'Explain how retrieval works', 'test'))
+    assert 'Retrieves documents' in answer['answer'] or 'retriever.search' in answer['answer']
+    assert answer['edges']
+    assert any('section' in finding['entity_ids'] or 'file' in finding['entity_ids'] for finding in answer['findings'])

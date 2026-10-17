@@ -5,14 +5,14 @@ ProjectBrain is a graph-backed project investigation workspace built for **Graph
 ## What works today
 
 - A polished workspace with project signals, a searchable graph explorer, an assistant, investigation history, and a task approval screen.
-- A repeatable Atlas demo project with blockers, ownership, pull requests, a release, a decision, a document, and a past investigation.
+- Starts empty: every project and source comes from user imports. Synthetic fixtures exist only under tests.
 - Upload of TXT, Markdown, PDF, or DOCX files. Extracted sections connect to existing project records when their names are mentioned; these links are marked as candidates.
 - Read-only paginated import of GitHub issues, pull requests, assignees, milestones, and README sections. The default is up to 1,000 work records, configurable with `IMPORT_MAX_RECORDS` (maximum 5,000). Explicit `fixes #N`, `closes #N`, `resolves #N`, `blocked by #N`, and `depends on #N` references become relationships when both records are present.
 - FalkorDB-backed project records, relationships, investigation findings, prior-session recall, and local action proposals.
 - Dynamic natural-language question handling. The agent ranks relevant entities, traverses their FalkorDB relationships up to three hops, and combines dependency, ownership, knowledge, and memory findings.
 - Optional model-generated wording with `OPENAI_API_KEY`; without a key, deterministic evidence-based wording still works.
 
-**Current boundaries:** This is a local prototype, not a production deployment. The local API has no user authentication or tenant isolation. Imports run within requests rather than a durable background queue, and graph refreshes are not transactional. Keep it bound to localhost and use public or synthetic data. GitHub and Jira connectors are read-only; approved proposals stay inside ProjectBrain. GitHub source code, PR diffs, comments, and attachments are not imported. Retrieval uses keyword ranking and bounded graph traversal; an optional model writes from the retrieved evidence. It cannot guarantee answers to every question.
+**Current boundaries:** This is a local prototype, not a production deployment. The local API has no user authentication or tenant isolation. Imports run within requests rather than a durable background queue, and graph refreshes are not transactional. Keep it bound to localhost and use public or synthetic data. GitHub and Jira connectors are read-only; approved proposals stay inside ProjectBrain. GitHub code import is bounded; PR diffs, comments, and attachments are not imported. Retrieval uses keyword ranking and bounded graph traversal; an optional model writes from the retrieved evidence. It cannot guarantee answers to every question.
 
 ## Run locally
 
@@ -22,7 +22,7 @@ The easiest route is Docker Desktop:
 docker compose up --build
 ```
 
-Open [http://localhost:8000](http://localhost:8000). FalkorDB Browser is at [http://localhost:3000](http://localhost:3000). An empty installation starts with onboarding. Add your own source or explicitly choose the optional Atlas demo.
+Open [http://localhost:8000](http://localhost:8000). FalkorDB Browser is at [http://localhost:3000](http://localhost:3000). An empty installation starts with onboarding. Add your own source. There is no demo seeding route.
 
 Alternatively, run FalkorDB in Docker and the API in a local Python environment:
 
@@ -39,15 +39,6 @@ Copy `.env.example` to `.env` if you want to set credentials. Docker Compose and
 ### Windows Docker Desktop startup issue
 
 Some Docker Desktop versions fail before the Linux engine starts because Windows cannot remove transient `dockerInference` or `engine.sock` socket files. If Docker logs show this exact error, see [Docker's issue report](https://github.com/docker/desktop-feedback/issues/531). After Docker Desktop has fully stopped, move both `%LOCALAPPDATA%\Docker\run` and `%LOCALAPPDATA%\docker-secrets-engine` aside to uniquely named backup folders, set `"EnableDockerAI": false` in a backed-up `%APPDATA%\Docker\settings-store.json`, and restart Docker Desktop. These are runtime socket folders; keep the backups until the engine and your containers are verified. Do not use Docker Desktop's factory reset to resolve this socket error, because it can remove local container data and volumes.
-
-## Use the demo
-
-1. Open the workspace and explicitly load the optional Atlas demo, or add your own source.
-2. Ask: **What is blocking the public beta launch?**
-3. Inspect the three agent findings and connected source records.
-4. Prepare a follow-up task, then approve it on the Investigations screen.
-5. Ask a related question in a new browser session to see earlier investigation memory.
-6. Use **Add a source** to import a public GitHub repository or upload a document to the selected project. The selector lets you switch between projects.
 
 ## Connect your own sources
 
@@ -128,9 +119,17 @@ Run database integration tests against a running FalkorDB with `$env:RUN_GRAPH_T
 | Follow connections | Multi-hop traversal across tasks, milestones, people, changes, and decisions |
 | Remember across sessions | Persisted investigation answers and findings |
 | Share state between agents | Specialist findings are written to one shared investigation graph |
-| Connect people, projects, and decisions | Atlas model and graph explorer |
+| Connect people, projects, and decisions | Imported assignees, tickets, files, and explicit portable decision records |
 | Show the path behind an answer | Findings link to supporting graph entities |
 
 The clearest current entry is **Track 1: Agents That Act on Connected Data**. Track 2 and Track 3 foundations are present, but full multi-agent coordination and company-wide knowledge ingestion need further work before making broad claims about those tracks.
 
 AI coding assistance was used in developing this project. The submitter should review, test, and explain its architecture and code before submission.
+
+## Repository questions and answer modes
+
+A repository with no README still imports a file listing and selected code. Up to 500 eligible file records and content for 24 prioritized files (each at most 40 KB) are imported. Generated/vendor folders and common credential filenames are excluded; this is not a secret scanner. Python imports become explicit `IMPORTS` edges; code sections retain file/line links. Other languages are searchable text. No imported code runs. Selection is bounded, not an exhaustive code audit, and coverage appears beside each answer.
+
+Without `OPENAI_API_KEY`, chat shows source excerpts and connections. This mode does not provide free-form AI synthesis. For AI-written explanations, configure that key in local `.env` and recreate the app. A provider failure falls back visibly to source evidence. Missing source content produces an explicit limitation instead of a repository-name-only answer.
+
+See [HACKATHON_AUDIT.md](HACKATHON_AUDIT.md) for the implementation and submission gaps. The standard HTML/CSS/JavaScript files are the UI application, not hardcoded project data.

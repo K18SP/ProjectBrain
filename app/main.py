@@ -19,7 +19,6 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from dotenv import load_dotenv
 
 from .agent import investigate
-from .demo import demo_project
 from .documents import document_project_data, extract_document
 from .github_source import import_repository
 from .jira import import_jira, jira_data
@@ -93,11 +92,6 @@ def health():
         return {"status": "ready", "graph": "connected"}
     except HTTPException:
         return {"status": "waiting", "graph": "unavailable"}
-
-
-@app.post("/api/demo/seed")
-def seed_demo():
-    return store().import_project(demo_project())
 
 
 @app.get("/api/projects")

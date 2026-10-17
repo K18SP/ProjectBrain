@@ -11,11 +11,22 @@ from .graph import GraphStore
 
 STOP_WORDS = {"what", "when", "where", "which", "who", "why", "how", "can", "could", "would", "should",
               "does", "do", "did", "are", "is", "our", "the", "this", "that", "with", "from", "about",
-              "project", "please", "show", "tell", "me", "for", "and", "any", "all", "will", "was"}
+              "repo", "repository", "explain", "used", "using", "project", "please", "show", "tell", "me", "for", "and", "any", "all", "will", "was"}
 
 
 def terms(text: str) -> set[str]:
     return {word for word in re.findall(r"[a-z0-9]+", text.lower()) if len(word) > 2 and word not in STOP_WORDS}
+
+
+def relevant_excerpt(text: str, query_terms: set[str]) -> str:
+    lines = text.splitlines()
+    if len(text) <= 1400:
+        return text
+    scored = [(len(query_terms & terms(line)), index) for index, line in enumerate(lines)]
+    best = max(scored, default=(0, 0), key=lambda pair: pair[0])[1]
+    start = max(0, best - 3)
+    excerpt = '\n'.join(lines[start:start + 22])[:1400]
+    return ('…\n' if start else '') + excerpt + ('\n…' if start + 22 < len(lines) else '')
 
 
 def rank_entities(question: str, entities: list[dict]) -> list[dict]:
@@ -26,6 +37,10 @@ def rank_entities(question: str, entities: list[dict]) -> list[dict]:
         name_terms = terms(entity["name"])
         other_terms = terms((entity.get("description") or "") + " " + (entity.get("status") or ""))
         score = 4 * len(query_terms & name_terms) + len(query_terms & other_terms)
+        if entity['kind'] in {'CodeSection', 'DocumentSection'}:
+            score += 3 * len(query_terms & other_terms)
+        if entity['kind'] == 'Repository' and not entity.get('description'):
+            score = 0
         reference = re.search(r"(?:#\d+|[A-Z][A-Z0-9_]*-\d+)", question, re.I)
         if reference and re.search(re.escape(reference.group()) + r"\b", entity["name"], re.I):
             score += 100
@@ -37,7 +52,7 @@ def rank_entities(question: str, entities: list[dict]) -> list[dict]:
             score += 2
         if any(word in lower_question for word in ("who", "owner", "team", "responsible")) and entity["kind"] == "Person":
             score += 2
-        if any(word in lower_question for word in ("why", "decision", "reason", "explain", "about")) and entity["kind"] in {"Decision", "Document", "DocumentSection", "Repository"}:
+        if any(word in lower_question for word in ("why", "decision", "reason", "explain", "about")) and entity["kind"] in {"Decision", "Document", "DocumentSection", "Repository", "CodeFile", "CodeSection"}:
             score += 2
         if any(word in lower_question for word in ("issue", "task", "work")) and entity["kind"] == "Task":
             score += 1
@@ -78,7 +93,7 @@ def _finding_for(agent: str, question: str, nodes: list[dict], edges: list[dict]
         blockers = [e for e in edges if e["kind"] in {"BLOCKS", "DEPENDS_ON", "REQUIRED_FOR"}
                     and e.get("confidence", "confirmed") == "confirmed"]
         if blockers:
-            details = [f"{by_id[e['source']]['name']} {e['kind'].lower().replace('_', ' ')} {by_id[e['target']]['name']}" for e in blockers[:5] if e["source"] in by_id and e["target"] in by_id]
+            details = [f"{by_id[e['source']]['name']} {e['kind'].lower().replace('_', ' ')} {by_id[e['target']]['name']}" + (' (possible connection)' if e.get('confidence') == 'candidate' else '') for e in blockers[:5] if e["source"] in by_id and e["target"] in by_id]
             ids = list({x for e in blockers[:5] for x in (e["source"], e["target"])})
             return "Dependency chain", "; ".join(details), ids
     if agent == "Ownership agent":
@@ -91,9 +106,9 @@ def _finding_for(agent: str, question: str, nodes: list[dict], edges: list[dict]
             details = [f"{n['owner']} owns {n['name']}" for n in owned[:4]]
             return "Responsible people", "; ".join(details), [n["id"] for n in owned[:4]]
     if agent == "Knowledge agent":
-        knowledge = [n for n in nodes if n["kind"] in {"Decision", "Document", "DocumentSection", "Investigation", "Repository"}]
+        knowledge = [n for n in nodes if n.get("description") and n["kind"] in {"Decision", "Document", "DocumentSection", "Investigation", "Repository"}]
         if knowledge:
-            return "Recorded context", "; ".join(f"{n['name']}: {n.get('description','')[:140]}" for n in knowledge[:3]), [n["id"] for n in knowledge[:3]]
+            return "Recorded context", "; ".join(f"{n['name']}: {n.get('description','')[:500]}" for n in knowledge[:3]), [n["id"] for n in knowledge[:3]]
     return None
 
 
@@ -148,7 +163,10 @@ async def investigate(store: GraphStore, project_id: str, question: str, session
         if exact:
             seeds = exact[:12]
     if re.search(r"\b(what does|what is|purpose|about)\b", lower) and re.search(r"\b(repo|repository|project)\b", lower):
-        seeds = [entity for entity in candidates if entity["kind"] in {"Repository", "Document", "DocumentSection"}][:12] or seeds
+        overview = [entity for entity in candidates if entity['kind'] in {'Repository', 'Document', 'DocumentSection', 'CodeFile'}
+                    and entity.get('description') and 'File listed; content not imported.' not in entity['description']]
+        overview.sort(key=lambda entity: (entity['kind'] not in {'Document', 'DocumentSection'}, -len(entity['description'])))
+        seeds = overview[:12] or seeds
     summary_question = any(word in lower for word in ("overview", "summary", "summarize", "how many", "status", "everything"))
     if not seeds and (summary_question or status_filter or "unassigned" in lower):
         seeds = sorted(candidates, key=lambda item: item.get("updated_at") or "", reverse=True)[:12]
@@ -170,18 +188,34 @@ async def investigate(store: GraphStore, project_id: str, question: str, session
         description = f"{len(entities)} imported records, including {len(work)} issues and pull requests."
     else:
         description = "Matching source records:"
+    # Content-bearing records must outrank repository labels. Use graph-retrieved
+    # neighbors too, so imports and file sections can contribute to the answer.
+    query_terms = terms(question)
+    for repository in entities:
+        if repository['kind'] == 'Repository':
+            query_terms -= terms(repository['name'])
+    if not query_terms:
+        query_terms = set().union(*(terms(item['name']) for item in entities if item['kind'] == 'Repository'))
+    substantive = [item for item in nodes if (item.get('description') or item.get('owner') or item.get('status'))
+                   and 'File listed; content not imported.' not in item.get('description', '')]
+    substantive.sort(key=lambda item: (
+        -len(query_terms & terms(item.get('description', ''))),
+        item['kind'] not in {'CodeFile', 'DocumentSection', 'Document', 'Task', 'PullRequest'},
+        item['id'] not in {seed['id'] for seed in seeds},
+        -len(item.get('description', ''))))
+    records = substantive[:6] if substantive else seeds[:6]
     excerpts = []
-    for record in seeds[:6]:
+    for record in records:
         parts = [record["name"]]
         if record.get("status"):
             parts.append(f"status: {record['status']}")
         if record["kind"] in {"Task", "PullRequest"}:
             parts.append(f"assigned to: {record['owner']}" if record.get("owner") else "no assignee recorded")
         if record.get("description"):
-            parts.append(record["description"][:700])
+            parts.append(relevant_excerpt(record["description"], query_terms))
         excerpts.append(" · ".join(parts))
     store.save_finding(investigation_id, "Records agent", "What the sources say",
-                       description + ("\n\n" + "\n\n".join(excerpts) if excerpts else ""), [item["id"] for item in seeds[:6]])
+                       description + ("\n\n" + "\n\n".join(excerpts) if excerpts else ""), [item["id"] for item in records])
     agents = []
     if any(word in lower for word in ("block", "depend", "release", "launch", "risk", "delay")):
         agents.append("Dependency agent")
@@ -205,7 +239,18 @@ async def investigate(store: GraphStore, project_id: str, question: str, session
     answer_mode = "model" if answer else "evidence"
     if not answer:
         if findings:
-            answer = "\n\n".join(f["body"] for f in findings if f["agent"] != "Memory agent")
+            if not substantive and not (status_filter or summary_question):
+                answer = "I only have record names, not enough source content to answer this question. Refresh this repository to import code, or upload project documentation."
+            else:
+                answer = "From the imported project sources:\n\n" + "\n\n".join(excerpts[:3])
+                paths = [edge for edge in edges if edge['kind'] in {'IMPORTS', 'BLOCKS', 'DEPENDS_ON', 'OWNS', 'RESOLVES'}]
+                by_id = {item['id']: item for item in nodes}
+                if paths:
+                    answer += "\n\nConnected evidence:\n" + "\n".join(
+                        f"{by_id[e['source']]['name']} → {e['kind'].lower().replace('_', ' ')} → {by_id[e['target']]['name']}" + (' (possible connection)' if e.get('confidence') == 'candidate' else '')
+                        for e in paths[:6] if e['source'] in by_id and e['target'] in by_id)
+                if status_filter or summary_question:
+                    answer = description + "\n\n" + answer
             if related_previous:
                 answer += f" A previous investigation also covered this topic: {related_previous[0]['question']}."
         else:
@@ -215,6 +260,8 @@ async def investigate(store: GraphStore, project_id: str, question: str, session
     if truncated:
         warnings.append("This investigation inspected the first 5,000 project records; counts are partial.")
     coverage = "Answers reflect the last imported snapshot; refresh a source to include new changes."
+    if answer_mode == 'evidence':
+        coverage += " Source evidence mode: these are retrieved excerpts and connections, not an AI-written explanation. Configure OPENAI_API_KEY on the server for synthesis."
     if warnings:
         coverage += " " + " ".join(dict.fromkeys(warnings))
     store.complete_investigation(investigation_id, answer)

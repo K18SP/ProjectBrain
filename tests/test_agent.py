@@ -1,5 +1,5 @@
 from app.agent import rank_entities, terms
-from app.demo import demo_project
+from tests.sample_project import demo_project
 from app.github import parse_public_repo
 from app.documents import document_project_data, extract_document
 from fastapi.testclient import TestClient

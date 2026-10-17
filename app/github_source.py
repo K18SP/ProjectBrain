@@ -9,6 +9,7 @@ import httpx
 from .github import parse_public_repo
 from .schema import Entity, Link, ProjectData
 from .source_http import remote_json
+from .repository_code import repository_code
 
 
 async def import_repository(url: str) -> ProjectData:
@@ -35,8 +36,7 @@ async def import_repository(url: str) -> ProjectData:
         try:
             readme, _ = await remote_json(client, "GET", base + "/readme")
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 404:
-                warnings.append("Repository README could not be loaded.")
+            warnings.append("No README is available; answers will use imported code and work records." if exc.response.status_code == 404 else "Repository README could not be loaded.")
         except (ValueError, httpx.HTTPError):
             warnings.append("Repository README could not be loaded.")
     full_name = metadata.get("full_name") or f"{owner}/{repo}"
@@ -94,6 +94,11 @@ async def import_repository(url: str) -> ProjectData:
             entities[section_id] = Entity(id=section_id, kind="DocumentSection", name=f"README section {offset // 2000 + 1}",
                 description=text[offset:offset + 2000], source="github", url=readme.get("html_url") or "")
             links.append(Link(source=section_id, target=doc_id, kind="PART_OF"))
+    async with httpx.AsyncClient(headers=headers, timeout=20, follow_redirects=False) as client:
+        code_entities, code_links, code_warnings = await repository_code(client, base, metadata, project_id, repo_id)
+    entities.update({entity.id: entity for entity in code_entities})
+    links.extend(code_links)
+    warnings.extend(code_warnings)
     return ProjectData(project_id=project_id, name=full_name, description=metadata.get("description") or "GitHub repository",
         entities=list(entities.values()), links=links, source_id=project_id, source_kind="github",
         source_url=metadata["html_url"], source_name=full_name, warnings=warnings, partial=partial)

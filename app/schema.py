@@ -8,7 +8,7 @@ class Entity(BaseModel):
     kind: str
     name: str
     status: str = ""
-    source: str = "demo"
+    source: str = "import"
     url: str = ""
     updated_at: str = ""
     description: str = ""

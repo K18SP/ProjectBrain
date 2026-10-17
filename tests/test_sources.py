@@ -85,3 +85,42 @@ def test_cross_origin_write_is_rejected():
     from app.main import app
     response = TestClient(app).post('/api/projects', headers={'Origin': 'https://untrusted.example'}, json={'name': 'Blocked'})
     assert response.status_code == 403
+
+
+def test_repository_without_readme_imports_code_and_import_edges(monkeypatch):
+    code = {'pipeline.py': 'from worker import retrieve\nclass Pipeline:\n    """Retrieve documents and generate an answer."""\n    pass\n',
+            'worker.py': 'def retrieve():\n    """Search indexed document chunks."""\n    return []\n'}
+    def handler(request):
+        path = request.url.path
+        if path.endswith('/readme'):
+            return httpx.Response(404)
+        if path.endswith('/issues'):
+            return httpx.Response(200, json=[])
+        if '/git/trees/' in path:
+            return httpx.Response(200, json={'tree': [{'path': name, 'type': 'blob', 'mode': '100644', 'sha': name, 'size': len(text)} for name, text in code.items()]})
+        if '/git/blobs/' in path:
+            return httpx.Response(200, json={'content': base64.b64encode(code[path.split('/')[-1]].encode()).decode()})
+        return httpx.Response(200, json={'full_name': 'team/code', 'html_url': 'https://github.com/team/code', 'default_branch': 'main'})
+    mock_client(monkeypatch, handler)
+    data = asyncio.run(github_source.import_repository('https://github.com/team/code'))
+    assert any(entity.kind == 'CodeSection' and 'Search indexed' in entity.description for entity in data.entities)
+    assert any(link.kind == 'IMPORTS' and link.source.endswith('pipeline.py') and link.target.endswith('worker.py') for link in data.links)
+    assert any('No README' in warning for warning in data.warnings)
+
+
+def test_code_filters_and_excerpt_relevance():
+    from app.repository_code import eligible
+    from app.agent import relevant_excerpt
+    assert not eligible('.env')
+    assert not eligible('node_modules/a/index.js')
+    assert not eligible('credentials.json')
+    assert eligible('src/pipeline.py')
+    text = ('unrelated setup line\n' * 100) + 'retrieval searches document embeddings\n'
+    assert 'retrieval searches' in relevant_excerpt(text, {'retrieval'})
+
+
+def test_source_root_resolution_stays_candidate_and_rejects_ambiguity():
+    from app.repository_code import resolve_import
+    assert resolve_import('worker', {'backend/worker.py': 'one'}) == ('one', 'candidate')
+    assert resolve_import('worker', {'backend/worker.py': 'one', 'other/worker.py': 'two'})[0] is None
+    assert resolve_import('backend.worker', {'backend/worker.py': 'one'}) == ('one', 'confirmed')

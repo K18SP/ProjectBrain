@@ -5,6 +5,7 @@ const state = {
   asking: false,
   graph: null,
   lastInvestigation: null,
+  answers: new Map(),
   session: sessionStorage.getItem('projectbrain-session') || crypto.randomUUID(),
 };
 sessionStorage.setItem('projectbrain-session', state.session);
@@ -210,7 +211,8 @@ function renderEvidence(result) {
     if (!first || !second) return '';
     return `<div class="trace-path">${escapeHtml(first.name)} <b>— ${escapeHtml(edge.kind.replaceAll('_', ' ').toLowerCase())} →</b> ${escapeHtml(second.name)}${edge.confidence === 'candidate' ? ' <i>(possible match)</i>' : ''}</div>`;
   }).join('');
-  $('trace-content').innerHTML = findings + (paths ? `<div class="trace-item"><small>Connections used</small>${paths}</div>` : '') || '<div class="empty-list">No evidence found in connected sources.</div>';
+  $('trace-content').innerHTML = findings + (paths ? `<div class="trace-item"><small>Connections explored</small>${paths}</div>` : '') || '<div class="empty-list">No evidence found in connected sources.</div>';
+  $('chat-answer-mode').textContent = result.mode === 'model' ? 'AI answer grounded in your sources' : 'Source evidence · no AI synthesis';
   if (result.coverage) $('trace-content').insertAdjacentHTML('afterbegin', `<p class="coverage-note">${escapeHtml(result.coverage)}</p>`);
 }
 
@@ -231,8 +233,9 @@ async function askQuestion() {
     const result = await api('/api/investigations', { method: 'POST', body: JSON.stringify({ project_id: project, question, session_id: state.session }) });
     if (state.project !== project) { pending.remove(); return; }
     state.lastInvestigation = result.id;
+    if (result.id) state.answers.set(result.id, { question, result });
     pending.remove();
-    const extra = result.id ? `<div class="message-actions"><button data-followup="${escapeHtml(result.id)}">Suggest a follow-up task</button></div>` : '';
+    const extra = result.id && result.findings.length ? `<div class="message-actions"><button data-followup="${escapeHtml(result.id)}">Suggest a follow-up task</button></div>` : '';
     appendMessage('assistant', result.answer, extra);
     renderEvidence(result);
     await loadGraph();
@@ -243,9 +246,12 @@ async function askQuestion() {
 }
 
 async function proposeFollowup(investigationId) {
-  const title = 'Review this project investigation';
+  const context = state.answers.get(investigationId);
+  if (!context) return toast('Ask a question first so the follow-up has supporting evidence.');
+  const title = `Follow up: ${context.question}`.slice(0, 200);
+  const description = context.result.answer.slice(0, 3500) + '\n\nEvidence: ' + context.result.findings.map((finding) => finding.title).join('; ');
   try {
-    await api('/api/proposals', { method: 'POST', body: JSON.stringify({ investigation_id: investigationId, title, description: 'Review the answer and supporting project records before choosing a next step.' }) });
+    await api('/api/proposals', { method: 'POST', body: JSON.stringify({ investigation_id: investigationId, title, description }) });
     toast('Follow-up task added for your review.');
     await loadGraph();
     showView('activity');
@@ -398,16 +404,12 @@ $('create-project').addEventListener('click', async () => {
   } catch (error) { $('import-feedback').textContent = error.message; }
   finally { setImportBusy(false); }
 });
-$('load-demo').addEventListener('click', async () => {
-  $('load-demo').disabled = true;
-  try { const result = await api('/api/demo/seed', { method: 'POST' }); changeProject(result.project_id); await loadProjects(); }
-  catch (error) { toast(error.message); }
-  finally { $('load-demo').disabled = false; }
-});
+
 api('/api/connectors').then((config) => {
   $('jira-config-status').textContent = config.jira_configured ? 'Jira Cloud is connected. Import a ticket or all visible tickets from a project.' : 'Jira Cloud needs server credentials. Expand the setup instructions below.';
   $('github-config-status').textContent = config.github_authenticated ? 'Server token configured. Repositories are limited to its permissions.' : 'Public repositories work now. Private repositories require a server GITHUB_TOKEN.';
   $('answer-mode').textContent = config.answer_mode === 'model' ? 'AI answers with source evidence' : 'Evidence mode · source excerpts and connections';
+  $('chat-answer-mode').textContent = config.answer_mode === 'model' ? 'AI answers grounded in your sources' : 'Source evidence mode · AI key not configured';
 }).catch(() => {});
 $('topbar-date').textContent = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date());
 loadProjects();

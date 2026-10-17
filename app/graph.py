@@ -51,7 +51,7 @@ class GraphStore:
             "MERGE (p:Project {id:$id}) SET p.name=$name, p.description=$description, p.updated_at=$now",
             {"id": data.project_id, "name": data.name, "description": data.description, "now": utc_now()},
         )
-        source_id = data.source_id or f"demo:{data.project_id}"
+        source_id = data.source_id or f"import:{data.project_id}"
         grouped = defaultdict(list)
         for link in data.links:
             if not re.fullmatch(r"[A-Z][A-Z0-9_]*", link.kind):
@@ -88,7 +88,7 @@ class GraphStore:
         self.query("MERGE (s:Source {id:$id,project_id:$project_id}) "
                    "SET s.kind=$kind,s.name=$name,s.url=$url,s.synced_at=$now,s.record_count=$count,"
                    "s.partial=$partial,s.warnings=$warnings",
-                   {"id": source_id, "project_id": data.project_id, "kind": data.source_kind or "demo",
+                   {"id": source_id, "project_id": data.project_id, "kind": data.source_kind or "records",
                     "name": data.source_name or data.name, "url": data.source_url, "now": utc_now(),
                     "count": len(data.entities), "partial": data.partial, "warnings": json.dumps(data.warnings)})
         self.connect_mentions(data.project_id)

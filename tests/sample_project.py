@@ -1,4 +1,4 @@
-from .schema import Entity, Link, ProjectData
+from app.schema import Entity, Link, ProjectData
 
 
 def demo_project() -> ProjectData:
