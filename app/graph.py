@@ -29,10 +29,15 @@ class GraphStore:
             "socket_connect_timeout": 3,
             "socket_timeout": 15,
         }
+        if os.getenv("FALKORDB_USERNAME"):
+            options["username"] = os.environ["FALKORDB_USERNAME"]
+        if os.getenv("FALKORDB_SSL", "false").lower() == "true":
+            options["ssl"] = True
+            options["ssl_cert_reqs"] = "required"
         if os.getenv("FALKORDB_PASSWORD"):
             options["password"] = os.environ["FALKORDB_PASSWORD"]
         self.db = FalkorDB(**options)
-        self.graph = self.db.select_graph("projectbrain")
+        self.graph = self.db.select_graph(os.getenv("FALKORDB_GRAPH", "projectbrain"))
 
     def query(self, cypher: str, params: dict | None = None) -> list[list]:
         return self.graph.query(cypher, params=params or {}).result_set
@@ -167,8 +172,8 @@ class GraphStore:
     def create_investigation(self, project_id: str, question: str, session_id: str) -> str:
         investigation_id = str(uuid4())
         self.query(
-            "CREATE (i:Investigation {id:$id,project_id:$project_id,question:$question,"
-            "session_id:$session_id,created_at:$created_at,status:'running'})",
+            "MATCH (p:Project {id:$project_id}) CREATE (i:Investigation {id:$id,project_id:$project_id,question:$question,"
+            "session_id:$session_id,source_version:coalesce(p.updated_at,''),created_at:$created_at,status:'running'})",
             {"id": investigation_id, "project_id": project_id, "question": question,
              "session_id": session_id, "created_at": utc_now()},
         )
@@ -215,6 +220,8 @@ class GraphStore:
         return [dict(zip(("id", "agent", "title", "body", "entity_ids"), r)) for r in rows]
 
     def create_proposal(self, investigation_id: str, title: str, description: str) -> dict:
+        if not self.query("MATCH (i:Investigation {id:$id,status:'complete'}) RETURN i.id", {"id": investigation_id}):
+            raise ValueError("A completed investigation is required before proposing an action")
         proposal_id = str(uuid4())
         self.query(
             "MATCH (i:Investigation {id:$investigation_id}) "
@@ -226,20 +233,49 @@ class GraphStore:
         return {"id": proposal_id, "title": title, "description": description, "status": "pending", "destination": "ProjectBrain"}
 
     def decide_proposal(self, proposal_id: str, approved: bool) -> dict | None:
-        rows = self.query("MATCH (p:Proposal {id:$id}) RETURN p.status,p.title", {"id": proposal_id})
+        # One query atomically applies the decision and action; stable task ID makes retries idempotent.
+        if approved:
+            rows = self.query(
+                "MATCH (i:Investigation)-[:PROPOSED]->(p:Proposal {id:$id}) "
+                "WHERE p.status IN ['pending','approved'] "
+                "MERGE (t:Entity {id:$task_id,project_id:i.project_id}) "
+                "ON CREATE SET t.kind='Task',t.name=p.title,t.description=p.description,t.status='open',"
+                "t.source='ProjectBrain',t.source_id='local:actions',t.owner='',t.url='',t.archived=false,t.updated_at=$now "
+                "SET p.status='approved',p.task_id=t.id,p.executed_at=$now,p.decided_at=$now "
+                "MERGE (p)-[:CREATED]->(t) MERGE (t)-[:FOLLOWS_UP]->(i) "
+                "WITH i,p,t OPTIONAL MATCH (i)-[:HAS_FINDING]->(:Finding)-[:SUPPORTED_BY]->(e:Entity) "
+                "WHERE e.project_id=i.project_id "
+                "WITH p,t,collect(DISTINCT e) AS evidence "
+                "FOREACH (e IN evidence | MERGE (t)-[:BASED_ON]->(e)) "
+                "RETURN p.status,p.title,t.id",
+                {"id": proposal_id, "task_id": "followup:" + proposal_id, "now": utc_now()})
+        else:
+            rows = self.query("MATCH (p:Proposal {id:$id}) WHERE p.status='pending' "
+                              "SET p.status='rejected',p.decided_at=$now RETURN p.status,p.title,p.task_id",
+                              {"id": proposal_id, "now": utc_now()})
         if not rows:
-            return None
-        if rows[0][0] != "pending":
-            return {"id": proposal_id, "status": rows[0][0], "title": rows[0][1]}
-        status = "approved" if approved else "rejected"
-        self.query("MATCH (p:Proposal {id:$id}) SET p.status=$status,p.decided_at=$now",
-                   {"id": proposal_id, "status": status, "now": utc_now()})
-        return {"id": proposal_id, "status": status, "title": rows[0][1]}
+            rows = self.query("MATCH (p:Proposal {id:$id}) RETURN p.status,p.title,p.task_id", {"id": proposal_id})
+        return {"id": proposal_id, "status": rows[0][0], "title": rows[0][1], "task_id": rows[0][2]} if rows else None
+
+    def search_memory(self, project_id: str, question: str, exclude_id: str = "") -> list[dict]:
+        tokens = [word for word in re.findall(r"[a-z0-9]+", question.lower()) if len(word) > 3
+                  and word not in {'what','when','where','which','about','before','previous','earlier','remember','time','last','learn','learned'}][:20]
+        rows = self.query(
+            "MATCH (p:Project {id:$project_id}),(i:Investigation {project_id:$project_id,status:'complete'}) "
+            "WHERE i.id <> $exclude_id AND (size($tokens)=0 OR any(term IN $tokens WHERE "
+            "toLower(i.question) CONTAINS term OR toLower(i.answer) CONTAINS term)) "
+            "RETURN i.id,i.question,i.answer,i.created_at,coalesce(i.source_version,'')<>coalesce(p.updated_at,'') "
+            "ORDER BY i.created_at DESC LIMIT 20", {"project_id": project_id,"exclude_id": exclude_id,"tokens": tokens})
+        return [dict(zip(('id','question','answer','created_at','stale'), row)) for row in rows]
+
+    def save_trace(self, investigation_id: str, trace: list[dict], citations: list[str]) -> None:
+        self.query("MATCH (i:Investigation {id:$id}) SET i.tool_trace=$trace,i.citations=$citations",
+                   {"id": investigation_id,"trace": json.dumps(trace),"citations": json.dumps(citations)})
 
     def proposals(self, project_id: str) -> list[dict]:
         rows = self.query(
             "MATCH (i:Investigation {project_id:$project_id})-[:PROPOSED]->(p:Proposal) "
-            "RETURN p.id,p.title,p.description,p.status,p.created_at ORDER BY p.created_at DESC LIMIT 30",
+            "RETURN p.id,p.title,p.description,p.status,p.created_at,p.task_id ORDER BY p.created_at DESC LIMIT 30",
             {"project_id": project_id},
         )
-        return [dict(zip(("id", "title", "description", "status", "created_at"), r)) for r in rows]
+        return [dict(zip(("id", "title", "description", "status", "created_at", "task_id"), r)) for r in rows]

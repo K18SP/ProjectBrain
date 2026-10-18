@@ -172,14 +172,14 @@ function renderHistory() {
     ? state.graph.investigations.map((item) => `<div class="history-row"><strong>${escapeHtml(item.question)}</strong><p>${escapeHtml(item.answer?.slice(0, 280) || '')}</p><small>${escapeHtml(item.created_at?.slice(0, 16).replace('T', ' ') || '')}</small></div>`).join('')
     : '<div class="empty-list">No past questions yet. Ask a question to start a project history.</div>';
   $('proposal-list').innerHTML = state.graph.proposals.length
-    ? state.graph.proposals.map((item) => `<div class="history-row"><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.description)}</p><small>${escapeHtml(item.status)} · ${escapeHtml(item.created_at?.slice(0, 16).replace('T', ' ') || '')}</small>${item.status === 'pending' ? `<div><button data-decision="${escapeHtml(item.id)}" data-approved="true">Approve</button><button data-decision="${escapeHtml(item.id)}" data-approved="false">Dismiss</button></div>` : ''}</div>`).join('')
+    ? state.graph.proposals.map((item) => `<div class="history-row"><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.description.slice(0, 240))}${item.description.length > 240 ? "…" : ""}</p><details><summary>Review full supporting evidence</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(item.description)}</p></details><small>${escapeHtml(item.status)}${item.task_id ? ' · Task created' : ''} · ${escapeHtml(item.created_at?.slice(0, 16).replace('T', ' ') || '')}</small>${item.task_id ? `<div><button data-open-task="${escapeHtml(item.task_id)}">Open created task</button></div>` : ''}${item.status === 'pending' ? `<div><button data-decision="${escapeHtml(item.id)}" data-approved="true">Approve</button><button data-decision="${escapeHtml(item.id)}" data-approved="false">Dismiss</button></div>` : ''}</div>`).join('')
     : '<div class="empty-list">No follow-up tasks have been proposed yet.</div>';
 }
 
 async function decideProposal(id, approved) {
   try {
     await api(`/api/proposals/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ approved }) });
-    toast(approved ? 'Follow-up approved in ProjectBrain.' : 'Follow-up dismissed.');
+    toast(approved ? 'Follow-up task created with linked evidence.' : 'Follow-up dismissed.');
     await loadGraph();
   } catch (error) { toast(error.message); }
 }
@@ -206,13 +206,22 @@ function renderEvidence(result) {
       if (!node) return '';
       return node.url ? `<a target="_blank" rel="noopener" href="${escapeHtml(node.url)}">${escapeHtml(node.name)} ↗</a>` : `<span>${escapeHtml(node.name)}</span>`;
     }).join('')}</div></div>`).join('');
-  const paths = result.edges.slice(0, 12).map((edge) => {
+  const paths = (result.supporting_edges || []).slice(0, 12).map((edge) => {
     const first = byId[edge.source], second = byId[edge.target];
     if (!first || !second) return '';
     return `<div class="trace-path">${escapeHtml(first.name)} <b>— ${escapeHtml(edge.kind.replaceAll('_', ' ').toLowerCase())} →</b> ${escapeHtml(second.name)}${edge.confidence === 'candidate' ? ' <i>(possible match)</i>' : ''}</div>`;
   }).join('');
-  $('trace-content').innerHTML = findings + (paths ? `<div class="trace-item"><small>Connections explored</small>${paths}</div>` : '') || '<div class="empty-list">No evidence found in connected sources.</div>';
+  $('trace-content').innerHTML = findings + (paths ? `<div class="trace-item"><small>Connections between cited records</small>${paths}</div>` : '') || '<div class="empty-list">No evidence found in connected sources.</div>';
   $('chat-answer-mode').textContent = result.mode === 'model' ? 'Free AI answer · OpenRouter' : 'Source evidence · free AI unavailable';
+  const trace = (result.tool_trace || []).map((step) => `<div class="trace-path"><b>${escapeHtml(step.tool)}</b> · ${step.error ? 'Could not complete' : `${step.records} records, ${step.connections} connections, ${step.memories} memories`}</div>`).join('');
+  if (trace) $('trace-content').insertAdjacentHTML('afterbegin', `<div class="trace-item"><small>Agent-selected MCP tools</small>${trace}</div>`);
+  const citations = (result.citations || []).map((ref) => {
+    const node = byId[ref.id];
+    const memory = (result.previous || []).find((item) => item.id === ref.id);
+    const label = node?.name || memory?.question || ref.id;
+    return `<div class="trace-path"><b>[${escapeHtml(ref.label)}]</b> ${escapeHtml(label)}${memory?.stale ? ' · Older source snapshot' : ''}</div>`;
+  }).join('');
+  if (citations) $('trace-content').insertAdjacentHTML('afterbegin', `<div class="trace-item"><small>Checked source references</small>${citations}</div>`);
   if (result.coverage) $('trace-content').insertAdjacentHTML('afterbegin', `<p class="coverage-note">${escapeHtml(result.coverage)}</p>`);
 }
 
@@ -358,6 +367,8 @@ document.querySelectorAll('[data-go]').forEach((element) => element.addEventList
 document.addEventListener('click', (event) => {
   const example = event.target.closest('[data-question]');
   if (example) { $('question-input').value = example.dataset.question; askQuestion(); }
+  const task = event.target.closest('[data-open-task]');
+  if (task) { showView('graph'); showRecord(task.dataset.openTask); }
   const record = event.target.closest('[data-record]');
   if (record) showRecord(record.dataset.record);
   const decision = event.target.closest('[data-decision]');
@@ -406,8 +417,16 @@ $('create-project').addEventListener('click', async () => {
 });
 
 api('/api/connectors').then((config) => {
+  if (config.public_sources_only) {
+    const notice = document.createElement('p');
+    notice.className = 'coverage-note';
+    notice.textContent = 'Public-data demo: public GitHub repositories only. Do not enter private information in questions or tasks. Jira and file uploads are available in the local app.';
+    document.querySelector('.main').prepend(notice);
+    document.querySelectorAll('[data-source-tab="jira"], [data-source-tab="file"]').forEach(button => { button.disabled = true; });
+    document.querySelector('.source-hint').textContent = 'Hosted demo accepts public GitHub data only.';
+  }
   $('jira-config-status').textContent = config.jira_configured ? 'Jira Cloud is connected. Import a ticket or all visible tickets from a project.' : 'Jira Cloud needs server credentials. Expand the setup instructions below.';
-  $('github-config-status').textContent = config.github_authenticated ? 'Server token configured. Repositories are limited to its permissions.' : 'Public repositories work now. Private repositories require a server GITHUB_TOKEN.';
+  $('github-config-status').textContent = config.github_authenticated ? 'Server token configured. Repositories are limited to its permissions.' : (config.public_sources_only ? 'Only public repositories are allowed in this demo.' : 'Public repositories work now. Private repositories require a server GITHUB_TOKEN.');
   $('answer-mode').textContent = config.answer_mode === 'model' ? 'AI answers with source evidence' : 'Evidence mode · source excerpts and connections';
   $('chat-answer-mode').textContent = config.answer_mode === 'model' ? 'Free AI · OpenRouter · grounded in your sources' : 'Source evidence mode · AI key not configured';
 }).catch(() => {});

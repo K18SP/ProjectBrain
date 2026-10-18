@@ -4,6 +4,8 @@ from pathlib import Path
 from hashlib import sha256
 from uuid import uuid4
 import asyncio
+import base64
+import secrets
 import json
 import os
 import zipfile
@@ -36,8 +38,21 @@ app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
 
 @app.middleware("http")
 async def local_request_guard(request: Request, call_next):
+    password = os.getenv("APP_PASSWORD", "")
+    if os.getenv("PUBLIC_DEPLOYMENT", "true" if os.getenv("APP_NAME") else "false") == "true" and not password:
+        return JSONResponse({"detail":"Deployment access is not configured"}, status_code=503)
+    if password and request.url.path != "/api/health":
+        try:
+            scheme, encoded = request.headers.get("authorization", "").split(" ", 1)
+            username, supplied = base64.b64decode(encoded, validate=True).decode().split(":", 1)
+            authenticated = scheme.lower() == "basic" and secrets.compare_digest(username, os.getenv("APP_USERNAME", "reviewer")) and secrets.compare_digest(supplied, password)
+        except (ValueError, UnicodeError):
+            authenticated = False
+        if not authenticated:
+            return JSONResponse({"detail":"Sign in to this project workspace"}, status_code=401,
+                                headers={"WWW-Authenticate":'Basic realm="ProjectBrain", charset="UTF-8"'})
     origin = request.headers.get("origin")
-    if request.method not in {"GET", "HEAD", "OPTIONS"} and origin and origin != str(request.base_url).rstrip("/"):
+    if request.method not in {"GET", "HEAD", "OPTIONS"} and origin and origin != (os.getenv("PUBLIC_BASE_URL") or str(request.base_url).rstrip("/")):
         return JSONResponse({"detail": "Cross-origin writes are not allowed"}, status_code=403)
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -60,6 +75,11 @@ async def provider_error(request: Request, exc: httpx.HTTPStatusError):
 @app.exception_handler(httpx.HTTPError)
 async def provider_network_error(request: Request, exc: httpx.HTTPError):
     return JSONResponse({"detail": "The source could not be reached. Check the connection and try again."}, status_code=502)
+
+
+def require_private_sources():
+    if os.getenv("DEMO_PUBLIC_SOURCES_ONLY") == "true":
+        raise HTTPException(status_code=403, detail="This hosted demo accepts only public GitHub repositories. Use the local app for Jira and files.")
 
 
 def attach_to_project(graph: GraphStore, data, project_id: str | None):
@@ -110,7 +130,7 @@ def create_project(request: CreateProjectRequest):
 
 @app.get("/api/connectors")
 def connectors():
-    return {"github_authenticated": bool(os.getenv("GITHUB_TOKEN")),
+    return {"public_sources_only": os.getenv("DEMO_PUBLIC_SOURCES_ONLY") == "true","github_authenticated": bool(os.getenv("GITHUB_TOKEN")),
             "jira_configured": all(os.getenv(key) for key in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")),
             "ai_provider": "OpenRouter", "ai_model": "openrouter/free", "free_only": True,
             "answer_mode": "model" if os.getenv("OPENROUTER_API_KEY") else "evidence"}
@@ -139,6 +159,7 @@ async def github_import(request: ImportRequest):
 
 @app.post("/api/projects/import/jira")
 async def jira_import(request: JiraRequest):
+    require_private_sources()
     try:
         graph = await run_in_threadpool(store)
         data = await import_jira(request.reference)
@@ -158,6 +179,7 @@ async def sync_source(request: SyncRequest):
         if source["kind"] == "github":
             data = await import_repository(source["url"])
         elif source["kind"] == "jira":
+            require_private_sources()
             data = await import_jira(source["url"])
         else:
             raise HTTPException(status_code=400, detail="Upload the updated file with the same filename or source name to refresh it")
@@ -171,6 +193,7 @@ async def sync_source(request: SyncRequest):
 @app.post("/api/projects/{project_id:path}/documents")
 @app.post("/api/projects/{project_id:path}/imports")
 async def upload_document(project_id: str, file: UploadFile = File(...)):
+    require_private_sources()
     graph = await run_in_threadpool(store)
     project = await run_in_threadpool(graph.project, project_id)
     if not project:
@@ -212,7 +235,10 @@ async def ask(request: AskRequest):
 
 @app.post("/api/proposals")
 def propose(request: ProposalRequest):
-    return store().create_proposal(request.investigation_id, request.title, request.description)
+    try:
+        return store().create_proposal(request.investigation_id, request.title, request.description)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/proposals/{proposal_id}/decision")

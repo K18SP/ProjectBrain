@@ -12,7 +12,10 @@ ProjectBrain is a graph-backed project investigation workspace built for **Graph
 - Dynamic natural-language question handling. The agent ranks relevant entities, traverses their FalkorDB relationships up to three hops, and combines dependency, ownership, knowledge, and memory findings.
 - Optional model-generated wording with `OPENROUTER_API_KEY`; without a key, deterministic evidence-based wording still works.
 
-**Current boundaries:** This is a local prototype, not a production deployment. The local API has no user authentication or tenant isolation. Imports run within requests rather than a durable background queue, and graph refreshes are not transactional. Keep it bound to localhost and use public or synthetic data. GitHub and Jira connectors are read-only; approved proposals stay inside ProjectBrain. GitHub code import is bounded; PR diffs, comments, and attachments are not imported. Retrieval uses keyword ranking and bounded graph traversal; an optional model writes from the retrieved evidence. It cannot guarantee answers to every question.
+**Current boundaries:** This is a working hackathon application with shared-workspace password protection for hosting, not a multi-tenant production service. Imports run within requests and refreshes are not transactional. Connectors read source systems; approved proposals create persistent local tasks linked to their evidence. Retrieval combines lexical ranking, bounded graph traversal, and optional model-selected MCP tools. Free model availability varies. Citation validation checks reference IDs, not factual entailment. Keep private company data in a properly secured environment.
+
+**Hosted demo:** https://projectbrain-k18sp.embarko.app (workspace sign-in required). The free demo accepts public GitHub sources only. Jira and file imports are disabled there. Its database connection is unencrypted by explicit owner approval; never enter private information. Local Jira/file support remains available. Owner sign-in details are saved in ignored `data/hosting.env` and must be shared privately with reviewers.
+
 
 ## Run locally
 
@@ -52,7 +55,7 @@ JIRA_EMAIL=your-account@example.com
 JIRA_API_TOKEN=your-token
 ```
 
-The Jira tab accepts a ticket URL, a ticket key such as `TEAM-123`, or a project key such as `TEAM`. It imports accessible tickets, assignees, statuses, parent relationships, and explicit issue links. Jira references in other sources become candidate mentions, not confirmed dependencies. Live access requires valid credentials; automated tests use simulated Jira responses.
+The Jira tab accepts a ticket URL, a ticket key such as `TEAM-123`, or a project key such as `TEAM`. It imports accessible tickets, assignees, statuses, parent relationships, and explicit issue links. Jira references in other sources become candidate mentions, not confirmed dependencies. Live ticket import and refresh were verified against the owner’s Jira Cloud workspace on 18 October 2026. Automated tests also cover simulated Jira responses.
 
 Upload TXT, Markdown, PDF, DOCX, Jira JSON exports, or portable JSON for other tools. Native Slack, Notion, and other connectors are not implemented. Portable JSON uses this structure:
 
@@ -87,10 +90,10 @@ This neighborhood query is executed at each traversal step. The agent cannot for
 MATCH (i:Investigation {project_id:$project_id})
 WHERE i.status='complete' AND i.id <> $exclude_id
 RETURN i.id, i.question, i.answer, i.created_at
-ORDER BY i.created_at DESC LIMIT 8
+ORDER BY i.created_at DESC LIMIT 20
 ```
 
-This retrieves cross-session memory. Findings and evidence are stored separately so a later agent can inspect what supported an answer.
+The implementation additionally filters question/answer text for relevant terms and flags changed source versions; retrieval searches beyond the latest eight investigations. This supports cross-session memory. Findings and evidence are stored separately so a later agent can inspect what supported an answer.
 
 ## Architecture
 
@@ -99,9 +102,9 @@ Browser UI → FastAPI → investigation orchestrator → bounded graph tools �
                     ↘ GitHub / Jira / file adapters ↗
 ```
 
-The orchestrator ranks question-relevant records, traverses graph edges, and saves independent dependency, ownership, knowledge, and memory findings. The optional LLM only writes an answer from those findings. The graph remains authoritative for links and source provenance.
+The orchestrator ranks question-relevant records, traverses graph edges, and saves independent dependency, ownership, knowledge, and memory findings. A free model can select project-scoped MCP search, connection traversal, confirmed-path and memory tools through the MCP SDK. Two model turns permit at most four calls; a separate synthesis step validates source references. Tool traces and citation IDs are persisted. The graph remains authoritative for links and source provenance.
 
-The connector boundary accepts normalized `Entity` and `Link` records through `ProjectData`. Adapters normalize GitHub, Jira, documents, and portable records. Sources carry stable identities and refresh metadata. Organization-wide deployment still requires authentication, permissions, durable jobs, transactional refresh, and operational monitoring.
+The connector boundary accepts normalized `Entity` and `Link` records through `ProjectData`. Adapters normalize GitHub, Jira, documents, and portable records. Sources carry stable identities and refresh metadata. Organization-wide deployment still requires individual identities, permissions, durable jobs, transactional refresh, encrypted database access, and operational monitoring.
 
 ## Tests
 
@@ -137,3 +140,19 @@ See [HACKATHON_AUDIT.md](HACKATHON_AUDIT.md) for the implementation and submissi
 ## Free-only OpenRouter
 
 Set `OPENROUTER_API_KEY` in the ignored local `.env` file and recreate the app. Model routing is fixed in code to `openrouter/free`, with maximum prompt and completion prices set to zero. No paid model or OpenAI fallback is available. If free capacity, quota, or credentials are unavailable, the app shows source evidence instead. Account-level free limits still apply. Keys are not returned by the API or copied into the Docker image.
+
+The demo recording is in [docs/projectbrain-demo.mp4](docs/projectbrain-demo.mp4). It shows the local app using a real public repository, source-evidence investigation, follow-up approval, and persisted history after a new session.
+
+## MCP and approved actions
+
+Run an external scoped MCP server with `PROJECTBRAIN_PROJECT_ID` set and `python -m app.mcp_tools`. The app itself uses the SDK’s in-memory JSON-RPC transport. Tools are read-only and never accept raw Cypher. Specialist functions are sequential; they are not independent autonomous agents.
+
+Approving a proposal atomically creates one Task and links it to its investigation and supporting records. Repeated or concurrent approval returns the same task. Rejection does not create work. These tasks stay inside ProjectBrain; no GitHub or Jira issue is created.
+
+## Deployment
+
+`scripts/deploy_embarko.py` builds a source-only package; `--deploy` uses the saved authenticated Embarko token and configured external FalkorDB. It excludes credentials and local records, sets workspace authentication, disables private connectors, and verifies graph health. Use only the approved free tier. Do not disable database TLS for a private-data deployment.
+
+See [submission notes](docs/SUBMISSION.md) and [readiness audit](HACKATHON_AUDIT.md) for verified features and remaining external steps.
+
+Recording note: the final recording shows source-evidence fallback because free synthesis did not return an acceptable answer during capture. The recording includes model-selected MCP search and a rejected traversal request using an invalid record ID; earlier live verification also confirmed synthesized answers. Free capacity is not guaranteed. The video has no narration and runs at actual capture timing.

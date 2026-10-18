@@ -15,7 +15,7 @@ from .repository_code import repository_code
 async def import_repository(url: str) -> ProjectData:
     owner, repo = parse_public_repo(url)
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "ProjectBrain/0.2"}
-    if os.getenv("GITHUB_TOKEN"):
+    if os.getenv("GITHUB_TOKEN") and os.getenv("DEMO_PUBLIC_SOURCES_ONLY") != "true":
         headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
     base = f"https://api.github.com/repos/{owner}/{repo}"
     limit = max(100, min(int(os.getenv("IMPORT_MAX_RECORDS", "1000")), 5000))
@@ -23,6 +23,8 @@ async def import_repository(url: str) -> ProjectData:
     partial = False
     async with httpx.AsyncClient(headers=headers, timeout=20, follow_redirects=False) as client:
         metadata, _ = await remote_json(client, "GET", base)
+        if os.getenv("DEMO_PUBLIC_SOURCES_ONLY") == "true" and metadata.get("private"):
+            raise ValueError("Only public repositories are allowed in this demo")
         for page in range(1, (limit + 99) // 100 + 1):
             batch, response_headers = await remote_json(client, "GET", base + "/issues",
                 params={"state": "all", "sort": "updated", "direction": "desc", "per_page": 100, "page": page})
