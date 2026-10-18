@@ -43,3 +43,5 @@ The previous recording exposed weak synthesis and verbose fallback, so feature c
 See `docs/SUBMISSION.md` for the deadline and the outstanding registration, reviewer-access and final submission steps. The existing video predates these response changes; a stronger recording is recommended before submitting.
 
 Validation after the response update: 40 tests passed. Two live repository questions returned model answers; the API-flow question successfully used MCP search and traversal. Spot-checking confirmed the route and service-call evidence, but the model also inferred startup initialization from a partial main.py excerpt. Citation validity alone is not factual verification; this remains a model-quality limitation.
+
+A subsequent instruction update explicitly distinguishes imports from runtime initialization and requires missing wiring to be stated. The same-evidence recheck now acknowledged that exact service initialization was not shown. This reduces overclaiming but does not replace claim-level verification.
