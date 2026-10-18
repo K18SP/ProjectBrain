@@ -42,3 +42,17 @@ def test_generated_followup_not_reused_as_source_for_code_question():
            {'id':'file:1','name':'routes.py','kind':'CodeSection','description':'API RAG connections'}]
     assert [n['id'] for n in rank_entities('Explain API RAG connections',nodes)] == ['file:1']
     assert any(n['id']=='followup:1' for n in rank_entities('Show follow-up tasks about API',nodes))
+
+
+def test_citation_ranges_expand_but_unknown_sources_still_rejected():
+    from app.agent import normalize_citations
+    assert normalize_citations('Path [E1–E3]') == 'Path [E1] [E2] [E3]'
+    assert not valid_citations(normalize_citations('Path [E1–E3]'), {'E1':'a','E2':'b'})
+
+
+def test_evidence_fallback_is_short_and_uses_exact_sources():
+    from app.agent import concise_evidence
+    records=[{'id':'a','name':'service.py','description':'"""Retrieves relevant documents."""'+('\ncode()'*1000)}]
+    answer=concise_evidence(records,[],records,{'E1':'a'},'How does retrieval work?')
+    assert '[E1]' in answer and 'Retrieves relevant documents' in answer
+    assert len(answer)<600 and 'code()' not in answer

@@ -32,3 +32,24 @@ This is a hackathon application, not a complete enterprise platform. Imports and
 AI coding assistance was used. The participant should review and explain the design and tests. Confirm registration, eligibility, reviewer access and the organizer’s final submission fields before submitting. This file is a draft, not confirmation that an entry was submitted.
 
 Recording note: the final recording shows source-evidence fallback because free synthesis did not return an acceptable answer during capture. The recording includes model-selected MCP search and a rejected traversal request using an invalid record ID; earlier live verification also confirmed synthesized answers. Free capacity is not guaranteed. The video has no narration and runs at actual capture timing.
+
+
+## Submission checklist — checked 18 October 2026
+
+Official page: https://www.wemakedevs.org/hackathons/falkordb
+Deadline: 18 October 2026, 11:59 PM IST.
+
+Ready: public GitHub repository, deployed app, local setup, demo recording, architecture description, AI-assistance disclosure, and Track 1 core features (FalkorDB context, graph tools/MCP, evidence-linked local action).
+
+Still required from the participant:
+- Sign in on the official page and confirm registration and team details (solo or up to four).
+- Confirm the main submission and FalkorDB implementation were built during the event.
+- Select Track 1 and fill in every field in the signed-in submission panel. Exact fields are not visible on the public page and remain unverified.
+- Include repository/deployment links and privately provide reviewer access. Verify reviewers can open the app and video without your local computer.
+- Submit the entry and retain its confirmation before the deadline. No submission confirmation has been verified.
+
+Quality recommendation, not an additional stated eligibility rule: replace the older demo recording with a clean explanation of the improved answer flow, a successful multi-hop investigation, an approved task and later recall. The existing video shows fallback behavior and a rejected model tool call; it is a weak showcase even though the app runs.
+
+A blog is optional for the separate blog prize. Full semantic/procedural memory, tenant isolation and company chat ingestion are not required to enter Track 1; do not claim Tracks 2/3 are complete. This is a hackathon prototype with production limitations, not a fully hardened enterprise platform.
+
+Response evaluation: 40 tests passed and two live questions returned substantially clearer model answers. Exact citation IDs are checked, but full claim-level verification is not implemented; partial-code inferences remain a limitation to disclose.

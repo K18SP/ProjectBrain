@@ -34,3 +34,12 @@ Hosted smoke checks also verified a real public import (167 nodes, 251 edges), a
 ## Delivered artifacts
 
 `docs/projectbrain-demo.mp4` records the working UI, evidence fallback, task approval, created task and saved history. The final capture includes model-selected MCP calls; synthesis fell back to source evidence. Earlier live checks also verified synthesized answers. `docs/SUBMISSION.md` contains the entry draft and local setup. Registration and organizer submission remain external steps.
+
+
+## Response-quality follow-up
+
+The previous recording exposed weak synthesis and verbose fallback, so feature completion should not be mistaken for answer quality. The response flow now separates individual source findings, deduplicates file records, normalizes citation ranges while rejecting unknown references, and avoids copying old answers unless history was requested. Fallbacks are short labeled excerpts. The UI formats bold/code safely and keeps coverage details expandable. MCP follow-up schemas enumerate observed record IDs. These changes improve clarity; free model reliability and factual support still need review on each answer.
+
+See `docs/SUBMISSION.md` for the deadline and the outstanding registration, reviewer-access and final submission steps. The existing video predates these response changes; a stronger recording is recommended before submitting.
+
+Validation after the response update: 40 tests passed. Two live repository questions returned model answers; the API-flow question successfully used MCP search and traversal. Spot-checking confirmed the route and service-call evidence, but the model also inferred startup initialization from a partial main.py excerpt. Citation validity alone is not factual verification; this remains a model-quality limitation.

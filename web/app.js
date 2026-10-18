@@ -184,12 +184,19 @@ async function decideProposal(id, approved) {
   } catch (error) { toast(error.message); }
 }
 
+function formatAnswer(text) {
+  return escapeHtml(text)
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/^#{1,3} (.+)$/gm, '<strong>$1</strong>');
+}
+
 function appendMessage(kind, text, extra = '') {
   const log = $('chat-log');
   log.querySelector('.welcome-message')?.remove();
   const row = document.createElement('div');
   row.className = `chat-message ${kind}`;
-  row.innerHTML = `<div class="bubble">${kind === 'assistant' ? '<div class="byline">PROJECTBRAIN</div>' : ''}${escapeHtml(text)}${extra}</div>`;
+  row.innerHTML = `<div class="bubble">${kind === 'assistant' ? '<div class="byline">PROJECTBRAIN</div>' : ''}${kind === 'assistant' ? formatAnswer(text) : escapeHtml(text)}${extra}</div>`;
   log.appendChild(row);
   log.scrollTop = log.scrollHeight;
   return row;
@@ -222,7 +229,7 @@ function renderEvidence(result) {
     return `<div class="trace-path"><b>[${escapeHtml(ref.label)}]</b> ${escapeHtml(label)}${memory?.stale ? ' · Older source snapshot' : ''}</div>`;
   }).join('');
   if (citations) $('trace-content').insertAdjacentHTML('afterbegin', `<div class="trace-item"><small>Checked source references</small>${citations}</div>`);
-  if (result.coverage) $('trace-content').insertAdjacentHTML('afterbegin', `<p class="coverage-note">${escapeHtml(result.coverage)}</p>`);
+  if (result.coverage) $('trace-content').insertAdjacentHTML('afterbegin', `<details class="coverage-note"><summary>Answer coverage and limitations</summary><p>${escapeHtml(result.coverage)}</p></details>`);
 }
 
 async function askQuestion() {

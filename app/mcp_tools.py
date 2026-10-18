@@ -1,6 +1,7 @@
 """Project-scoped MCP tools over the SDK's in-memory JSON-RPC transport."""
 import json
 import os
+import copy
 from collections import deque
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -66,9 +67,16 @@ async def collect_context(store, project_id, question, exclude_id=''):
             remaining=4
             async with httpx.AsyncClient(timeout=30) as client:
                 for turn in range(2):
+                    available = copy.deepcopy(tools if turn == 0 else [tool for tool in tools if tool['function']['name'] != 'search_records'])
+                    known_ids = list(dict.fromkeys(node['id'] for node in result['nodes']))[:50]
+                    if known_ids:
+                        for tool in available:
+                            for name, schema in tool['function']['parameters'].get('properties', {}).items():
+                                if name in {'entity_id','source_id','target_id'}:
+                                    schema['enum'] = known_ids
                     response=await client.post('https://openrouter.ai/api/v1/chat/completions',headers={'Authorization':f'Bearer {key}'},json={
                         'model':'openrouter/free','max_tokens':700,'temperature':0.1,'provider':{'max_price':{'prompt':0,'completion':0}},
-                        'tools':tools if turn==0 else [tool for tool in tools if tool['function']['name']!='search_records'],'tool_choice':'required','messages':messages})
+                        'tools':available,'tool_choice':'required','messages':messages})
                     response.raise_for_status()
                     message=response.json()['choices'][0]['message']
                     calls=(message.get('tool_calls') or [])[:remaining]
@@ -83,7 +91,8 @@ async def collect_context(store, project_id, question, exclude_id=''):
                             content={'error':'Invalid tool arguments'} if reply.isError else json.loads(next(b.text for b in reply.content if b.type=='text'))
                         result['trace'].append({'tool':name,'arguments':arguments,'protocol':'MCP','error':bool(reply.isError),'records':len(content.get('nodes',[])),'connections':len(content.get('edges',[])),'memories':len(content.get('memories',[]))})
                         for field in ('nodes','edges','memories'): result[field].extend(content.get(field,[]))
-                        messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(content)[:24000]})
+                        compact = {**content, 'nodes':[{**node, 'description':node.get('description','')[:600]} for node in content.get('nodes',[])[:20]]}
+                        messages.append({'role':'tool','tool_call_id':call['id'],'content':json.dumps(compact)})
                         remaining-=1
                     if remaining<=0: break
             result['status']='used' if result['trace'] else 'no_tools_selected'
